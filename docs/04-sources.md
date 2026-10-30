@@ -1,0 +1,121 @@
+# 4. Sources & Connectors
+
+Legend: **P** = passive (never touches target infrastructure), **A** = active
+(sends traffic to the target), 🔑 = API key required, 💲 = paid tier needed for
+useful volume.
+
+## Websites / Infrastructure
+
+| Connector          | Source                                  | Input → Output                                  | Mode |
+|--------------------|-----------------------------------------|-------------------------------------------------|------|
+| `dns`              | Public resolvers (A, AAAA, MX, NS, TXT, SOA, CAA) | Domain → IP, Domain, Email (SOA/DMARC rua) | P |
+| `whois` / `rdap`   | RDAP / WHOIS servers (incl. ROTLD for `.ro`) | Domain → Person/Org, Email, dates          | P |
+| `crtsh`            | crt.sh certificate transparency         | Domain → subdomains, Certificate                | P |
+| `passive_dns`      | SecurityTrails, VirusTotal, Validin     | Domain ↔ IP history                             | P 🔑 |
+| `shodan` / `censys`| Internet-wide scan data                 | IP/Domain → ports, banners, tech, CVEs          | P 🔑💲 |
+| `ipinfo` / `asn`   | ipinfo.io, RIPE, BGP data               | IP → ASN, geo, org                              | P 🔑 |
+| `wayback`          | Internet Archive CDX API                | Domain → historical URLs, old snapshots         | P |
+| `urlscan`          | urlscan.io                              | Domain/URL → screenshots, outgoing links        | P 🔑 |
+| `virustotal`       | VirusTotal                              | Domain/IP/URL → reputation, related samples     | P 🔑 |
+| `http_probe`       | Direct fetch                            | Domain → title, tech stack, emails, socials, robots.txt, security.txt | **A** |
+| `tech_fingerprint` | Wappalyzer rules on fetched page        | URL → technologies + versions                   | **A** |
+| `subfinder`        | Aggregator of passive subdomain sources | Domain → subdomains                             | P |
+| `doc_metadata`     | Fetch public PDFs/DOCX, read EXIF/XMP   | Domain → Document → author names, software      | **A** |
+| `screenshot`       | Headless Chromium (Playwright)          | URL → Document (rendered PNG evidence)          | **A** |
+
+## Companies
+
+| Connector          | Source                                  | Input → Output                                  | Mode |
+|--------------------|-----------------------------------------|-------------------------------------------------|------|
+| `onrc` / `listafirme` | Romanian Trade Registry, aggregators (termene.ro, risco.ro, listafirme.ro) | CUI/name → admins, shareholders, CAEN, address, financials | P |
+| `anaf`             | ANAF public API (VAT status, fiscal info) | CUI → VAT, address, status                    | P |
+| `vies`             | EU VIES                                 | VAT → validity, name, address                   | P |
+| `opencorporates`   | OpenCorporates                          | Name → registrations worldwide, officers        | P 🔑 |
+| `gleif`            | GLEIF LEI registry                      | Name/LEI → legal entity, parent/child           | P |
+| `sec_edgar` / `companies_house` | US SEC / UK Companies House | Name → filings, officers                       | P 🔑 |
+| `sanctions`        | OpenSanctions, EU/UN/OFAC lists         | Person/Org → sanctions & PEP hits               | P |
+| `seap`             | Romanian public procurement (e-licitatie) | Org → public contracts                        | P |
+| `news`             | GDELT, Google News RSS                  | Org/Person → articles, mentions                 | P |
+| `jobs`             | LinkedIn/eJobs job posts (public)       | Org → tech stack, team structure                | P |
+
+## People
+
+| Connector          | Source                                  | Input → Output                                  | Mode |
+|--------------------|-----------------------------------------|-------------------------------------------------|------|
+| `username_enum`    | Sherlock / Maigret / WhatsMyName lists  | Username → SocialProfile on 400+ sites          | P* |
+| `email_rep`        | Holehe-style checks, EmailRep           | Email → registered services                     | P* |
+| `gravatar`         | Gravatar                                | Email → avatar, profile, linked accounts        | P |
+| `hibp`             | Have I Been Pwned                       | Email/Phone → Breach                            | P 🔑 |
+| `dehashed` / `intelx` | Breach & leak indexes                | Email/Username/Domain → breach records (redacted) | P 🔑💲 |
+| `github`           | GitHub API (users, commits, gists)      | Username/Email → profile, emails in commits, repos | P 🔑 |
+| `social_public`    | Public profile pages (X, Instagram, Facebook, TikTok, Reddit, Mastodon) | Profile → bio, links, location hints | P |
+| `linkedin_public`  | Public search results only              | Name + Org → role, profile URL                  | P |
+| `phone_lookup`     | libphonenumber, NumVerify               | Phone → carrier, country, line type             | P 🔑 |
+| `reverse_image`    | Yandex / Bing / TinEye                  | Photo → other appearances                       | P |
+| `dork_search`      | Google, Bing, DuckDuckGo, Yandex with dork templates (merged, de-duped) | any → URL, Document mentions (articles, profiles, public sites) | P |
+| `pastebins`        | Paste-site search                       | Email/Domain → mentions                         | P |
+
+\* Account-existence checks hit the third-party service (not the target), but
+can trigger notifications on some platforms. Flag them in the UI.
+
+## Legal & law enforcement
+
+Public wanted lists, sanctions, and court/enforcement records. All passive —
+official APIs or public pages.
+
+| Connector          | Source                                  | Input → Output                                  | Mode |
+|--------------------|-----------------------------------------|-------------------------------------------------|------|
+| `interpol`         | INTERPOL Notices public API (Red/Yellow/UN notices) | Name (+DOB/nationality) → notice, charges, country | P |
+| `europol`          | EU Most Wanted (eumostwanted.eu)        | Name → listing, offence, member state           | P |
+| `fbi_wanted`       | FBI Wanted public API                   | Name → listing, subject details                 | P |
+| `sanctions`        | OpenSanctions (consolidates EU/UN/OFAC/UK + PEP + some wanted) | Person/Org → sanctions, PEP, watchlist hits | P |
+| `natl_wanted`      | National police / fugitive lists (e.g. RO Poliția Română "urmăriți") | Name → listing | P |
+| `court_records`    | Public court portals where available (e.g. RO portal.just.ro) | Name/Org → case references | P |
+
+**Name-collision warning.** These sources match mostly on name, so hits have a
+high false-positive rate — many people share a name with a wanted or
+sanctioned person. The resolver stores every hit as a **low-confidence
+candidate** that is *not* attached to the person entity until a disambiguator
+(date of birth, nationality, photo, passport/ID) corroborates it. The UI labels
+it "possible match — unverified," and nothing in a report asserts that someone
+is wanted or sanctioned without a corroborated match and a screenshot of the
+official listing. This is to avoid falsely branding an innocent namesake.
+
+## Code & leaks
+
+| Connector          | Source                                  | Input → Output                                  | Mode |
+|--------------------|-----------------------------------------|-------------------------------------------------|------|
+| `github_code`      | GitHub code search                      | Domain/Org → repos, leaked config/keys mentions | P 🔑 |
+| `gitlab` / `bitbucket` | Public projects                     | Org → repos                                     | P |
+| `postman_public`   | Public Postman workspaces               | Domain → exposed API collections                | P |
+| `bucket_finder`    | Naming permutations for S3/GCS/Azure    | Org/Domain → open buckets                       | **A** |
+| `docker_hub` / `npm` / `pypi` | Package registries           | Org/Username → published packages               | P |
+
+## Pivot map (which entity triggers which connectors)
+
+```text
+Domain        → dns, whois, crtsh, passive_dns, wayback, urlscan, virustotal,
+                shodan, subfinder, github_code, dork_search, [http_probe]
+IPAddress     → ipinfo, shodan, passive_dns (reverse), virustotal
+Organization  → onrc, anaf, vies, opencorporates, gleif, sanctions, seap,
+                news, jobs, github_code, dork_search
+Person        → sanctions, interpol, europol, fbi_wanted, natl_wanted,
+                court_records, news, linkedin_public, dork_search, onrc (as admin)
+Email         → hibp, gravatar, email_rep, github, pastebins, dork_search
+Username      → username_enum, github, social_public
+Phone         → phone_lookup, hibp, dork_search
+SocialProfile → social_public, reverse_image (avatar)
+Document      → doc_metadata
+```
+
+## Connector priorities for the hackathon
+
+**Tier 1 (free, no key, high value)**: `dns`, `rdap`, `crtsh`, `wayback`,
+`http_probe`, `gravatar`, `username_enum`, `anaf`, `vies`, `opensanctions`,
+`github` (unauthenticated).
+
+**Tier 2 (free key)**: `hibp`, `urlscan`, `virustotal`, `ipinfo`, `shodan`
+(limited), `github` (authenticated).
+
+**Tier 3 (stretch)**: `onrc` scraping, `reverse_image`, `doc_metadata`,
+`dehashed`, LLM extraction from arbitrary pages.
