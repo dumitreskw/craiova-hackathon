@@ -5,7 +5,8 @@ target from snippets. It fetches the page, so like ``screenshot`` it touches
 whatever host serves the URL; the app keeps the target's own hosts behind the
 active-mode rules (``app/evidence.py``).
 
-Backends, fastest/best first, chosen by what is configured:
+Backends, cheapest first, each used only when the previous one returned a
+thin, blocked or JavaScript-only page:
 
 * **Firecrawl** (``FIRECRAWL_API_URL`` and/or ``FIRECRAWL_API_KEY``):
   best markdown, JS rendering, and anti-bot handling on the hosted service.
@@ -88,28 +89,39 @@ async def web_read(url: str) -> ConnectorResult:
         page["backend"] = name
         # Parsing is CPU work: keep it off the event loop.
         result = await asyncio.to_thread(_result, url, page, errors)
-        if name != "http" or _good_enough(page, result):
+        if _good_enough(page, result):
             return result
-        errors[name] = "thin or JavaScript-only page; escalating to a browser"
-        fallback = result
+        errors[name] = "thin, blocked or JavaScript-only page; escalating"
+        fallback = result if fallback is None or len(result.raw.get("markdown") or "") > len(
+            fallback.raw.get("markdown") or "") else fallback
     if fallback is not None:
         return fallback
     raise RuntimeError("all backends failed: " + "; ".join(f"{k}: {v}" for k, v in errors.items()))
 
 
+_BLOCKED = re.compile(r"just a moment|attention required|checking your browser|verify you are "
+                      r"human|are you a robot|captcha|access denied|request blocked|"
+                      r"unusual traffic", re.IGNORECASE)
+
+
 def _good_enough(page: dict, result: ConnectorResult) -> bool:
     status = page.get("status") or 200
     text = result.raw.get("markdown") or ""
-    return (status < 400 and result.raw.get("text_source") == "main_content"
-            and not (len(text) < 2000 and _JS_SHELL.search(text)))
+    head = (result.raw.get("title") or "") + " " + text[:1500]
+    if page.get("backend") == "firecrawl":  # the last resort: take what it read
+        return status < 400 and bool(text.strip())
+    return (status < 400 and result.raw.get("text_source") in ("main_content", "firecrawl")
+            and not (len(text) < 2000 and (_JS_SHELL.search(text) or _BLOCKED.search(head))))
 
 
 def _backends():
-    if os.environ.get("FIRECRAWL_API_URL") or os.environ.get("FIRECRAWL_API_KEY"):
-        yield "firecrawl", _firecrawl
+    # Cheapest first: plain HTTP (free, fastest), the Lightpanda browser (free,
+    # runs JavaScript), then Firecrawl (paid credits, gets through bot walls).
     yield "http", _plain_http
     if _cli.available("lightpanda"):
         yield "lightpanda", _lightpanda
+    if os.environ.get("FIRECRAWL_API_URL") or os.environ.get("FIRECRAWL_API_KEY"):
+        yield "firecrawl", _firecrawl
 
 
 # --- backends ---------------------------------------------------------------------

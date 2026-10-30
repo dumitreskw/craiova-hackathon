@@ -78,6 +78,7 @@ SOURCE_RELIABILITY: dict[str, float] = {
     "companies_house": 0.95,
     "wayback": 0.9,
     "hibp": 0.9,
+    "virustotal": 0.85,
 }
 
 

@@ -32,8 +32,9 @@ from ..resolver import entity_view
 # ignored, so this lights up as connectors land.
 PIVOTS: dict[EntityType, list[str]] = {
     EntityType.DOMAIN: ["dns", "rdap", "crtsh", "subfinder", "urlscan", "otx_domain",
-                        "wayback", "virustotal", "dnstwist", "hunter", "tomba", "http_probe"],
-    EntityType.IP: ["otx_ip", "ipinfo", "shodan", "virustotal"],
+                        "wayback", "virustotal_domain", "dnstwist", "hunter", "tomba",
+                        "http_probe"],
+    EntityType.IP: ["otx_ip", "virustotal_ip", "ipinfo", "shodan"],
     EntityType.ORGANIZATION: ["anaf", "vies", "companies_house", "gleif", "opencorporates",
                               "sanctions", "seap", "news", "dork_search"],
     EntityType.PERSON: ["sanctions", "interpol", "europol", "national_wanted",

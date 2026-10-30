@@ -141,7 +141,7 @@ READ_PAGE = _tool(
 WORKERS: dict[str, dict] = {
     "infrastructure": {
         "tools": ["dns", "rdap", "crtsh", "subfinder", "urlscan", "otx_domain", "otx_ip",
-                  "wayback", "dnstwist", "http_probe"],
+                  "virustotal_domain", "virustotal_ip", "wayback", "dnstwist", "http_probe"],
         "focus": "the target's domains and hosting: registration, DNS, subdomains, "
                  "hosting history, look-alike domains, archived files"},
     "web_presence": {

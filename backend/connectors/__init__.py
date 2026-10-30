@@ -31,6 +31,7 @@ from .registries import anaf, companies_house, gleif, vies
 from .sanctions import sanctions
 from .screenshot import screenshot
 from .urlscan import urlscan
+from .virustotal import virustotal
 from .web_read import web_read
 
 Connector = Callable[..., Awaitable[ConnectorResult]]
@@ -144,6 +145,14 @@ REGISTRY: dict[str, ConnectorSpec] = {
         ConnectorSpec("wayback", wayback, EntityType.DOMAIN, True,
                       "Internet Archive history of a domain: age, old subdomains, archived "
                       "files and admin/login paths no longer on the live site.", timeout=90),
+        ConnectorSpec("virustotal_domain", virustotal, EntityType.DOMAIN, True,
+                      "VirusTotal: security-engine verdicts, reputation, categories and "
+                      "passive DNS for a domain.", requires_key="VIRUSTOTAL_API_KEY",
+                      cost="metered", quota=240, quota_days=1, timeout=120),
+        ConnectorSpec("virustotal_ip", virustotal, EntityType.IP, True,
+                      "VirusTotal: verdicts, reputation, ASN/owner and domains seen on an IP.",
+                      requires_key="VIRUSTOTAL_API_KEY", cost="metered", quota=240,
+                      quota_days=1, timeout=120),
         ConnectorSpec("hibp", hibp, EntityType.EMAIL, True,
                       "Have I Been Pwned: breaches an email appears in, with dates and data "
                       "classes. Never returns passwords.", requires_key="HIBP_API_KEY",
@@ -194,4 +203,5 @@ __all__ = [
     "companies_house",
     "wayback",
     "hibp",
+    "virustotal",
 ]

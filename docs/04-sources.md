@@ -114,6 +114,7 @@ scan stumbles on.
 | `gleif` | Global LEI index | name / LEI → LEI, local registration number (linked to the ANAF / Companies House node), addresses, ultimate parent | free, no key | 0.4 s |
 | `companies_house` | UK Companies House | company number / exact name → profile, officers, persons with significant control | free key | officers are recorded, never auto-screened |
 | `wayback` | Internet Archive CDX | Domain → age, old subdomains, archived files and admin paths | free, no key | ~15 s |
+| `virustotal_domain` / `virustotal_ip` | VirusTotal public API | Domain/IP → engine verdicts, reputation, categories, ASN/owner, passive DNS | free key (4/min, 500/day; ledger quota 240 lookups/day) | 429s waited out |
 | `hibp` | Have I Been Pwned | Email → breaches, dates, data classes | ~US$4.39/month (Core 1) | seed-only; no passwords |
 | `dork_search` | **SearXNG** (self-hosted metasearch), DuckDuckGo fallback | query → URLs | free | 40 merged results in ~2 s |
 | `web_read` | **Firecrawl** → plain HTTP → **Lightpanda** | URL → main text, author/date, emails, social profiles, JSON-LD/OpenGraph, company identifiers (RO CUI, UK company number) that lead into the registries | free | ~0.5-2 s with Lightpanda; target-owned hosts follow active rules |
@@ -144,9 +145,11 @@ scan stumbles on.
 
 ### Page reading pipeline (after benchmarking, Oct 2026)
 
-`web_read` now reads **HTTP first** and escalates to the Lightpanda browser
-only when a page needs JavaScript (thin text, a "please enable JavaScript"
-shell) or HTTP is refused. On server-rendered pages (blogs, Wikipedia,
+`web_read` reads **HTTP first**, escalates to the Lightpanda browser only
+when a page needs JavaScript (thin text, a "please enable JavaScript" shell)
+or is blocked, and uses **Firecrawl** (paid credits) only when both fail,
+e.g. bot-walled sites such as Crunchbase (read live in 4.6 s after HTTP and
+Lightpanda were refused). A normal blog post never touches Firecrawl. On server-rendered pages (blogs, Wikipedia,
 registries) plain HTTP gave the same text and metadata as the browser 2-10x
 faster: 0.2-0.6 s vs 0.9-2.2 s.
 

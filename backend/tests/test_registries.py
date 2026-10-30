@@ -187,3 +187,73 @@ def test_scan_only_runs_matching_registries():
     assert {"anaf", "vies"} <= set(ro) and "companies_house" not in ro
     assert "anaf" not in gb and "anaf" not in named and "vies" not in named
     assert "gleif" in named
+
+
+# --- VirusTotal + reading order with Firecrawl -------------------------------------------
+
+from connectors.virustotal import virustotal
+
+VT_DOMAIN = {"data": {"attributes": {
+    "reputation": -12, "registrar": "NameCheap", "creation_date": 1700000000,
+    "last_analysis_stats": {"malicious": 3, "suspicious": 1, "harmless": 50},
+    "last_analysis_results": {"EngineA": {"category": "malicious", "result": "phishing"},
+                              "EngineB": {"category": "harmless", "result": "clean"}},
+    "categories": {"x": "phishing"}}}}
+
+
+@respx.mock
+async def test_virustotal_domain_verdicts_and_resolutions(monkeypatch):
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "k")
+    respx.get("https://www.virustotal.com/api/v3/domains/evil.example").mock(
+        return_value=httpx.Response(200, json=VT_DOMAIN))
+    respx.get("https://www.virustotal.com/api/v3/domains/evil.example/resolutions").mock(
+        return_value=httpx.Response(200, json={"data": [
+            {"attributes": {"host_name": "evil.example", "ip_address": "198.51.100.7",
+                            "date": 1710000000}},
+            {"attributes": {"host_name": "other.net", "ip_address": "198.51.100.8"}}]}))
+    r = await virustotal("evil.example")
+    assert "4 engines" in r.note and r.raw["flagged_by"] == {"EngineA": "phishing"}
+    dom = r.entities[0]
+    assert dom.attributes["vt_malicious"] == 3 and dom.attributes["created"] == "2023-11-14"
+    assert keys(r, EntityType.IP) == {"198.51.100.7"}          # other.net is not ours
+    assert r.relationships[0].type == "resolved_to_historically"
+
+
+@respx.mock
+async def test_virustotal_waits_out_rate_limit(monkeypatch):
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "k")
+    import sys
+    vt = sys.modules["connectors.virustotal"]  # the module, not the re-exported function
+
+    async def no_sleep(_s):
+        return None
+
+    monkeypatch.setattr(vt.asyncio, "sleep", no_sleep)
+    route = respx.get("https://www.virustotal.com/api/v3/ip_addresses/198.51.100.7").mock(
+        side_effect=[httpx.Response(429), httpx.Response(200, json={"data": {"attributes": {
+            "asn": 64500, "as_owner": "Example AS", "last_analysis_stats": {}}}})])
+    respx.get("https://www.virustotal.com/api/v3/ip_addresses/198.51.100.7/resolutions").mock(
+        return_value=httpx.Response(200, json={"data": []}))
+    r = await virustotal("198.51.100.7")
+    assert route.call_count == 2 and r.entities[0].attributes["as_owner"] == "Example AS"
+
+
+@respx.mock
+async def test_firecrawl_only_after_cheaper_backends_fail(monkeypatch):
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test")
+    monkeypatch.delenv("OSINT_LIGHTPANDA_CMD", raising=False)
+    monkeypatch.setattr("connectors._cli.shutil.which", lambda _t: None)
+    monkeypatch.delenv("OSINT_KALI_SSH", raising=False)
+    fc = respx.post("https://api.firecrawl.dev/v2/scrape").mock(return_value=httpx.Response(
+        200, json={"data": {"markdown": "# Company profile " + "details " * 300, "html": "",
+                            "metadata": {"statusCode": 200, "title": "Profile"}}}))
+    article = "<html><body><article>" + "".join(
+        f"<p>Section {i}: the company reported results for quarter {i}.</p>" for i in range(30)
+    ) + "</article></body></html>"
+    respx.get("https://ok.example/").mock(return_value=httpx.Response(200, text=article))
+    r = await web_read("https://ok.example/")
+    assert r.raw["backend"] == "http" and not fc.called       # no credits spent
+    respx.get("https://walled.example/").mock(return_value=httpx.Response(
+        403, text="<html><title>Just a moment...</title></html>"))
+    r = await web_read("https://walled.example/")
+    assert r.raw["backend"] == "firecrawl" and fc.called
