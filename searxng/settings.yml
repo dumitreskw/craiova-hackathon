@@ -1,0 +1,48 @@
+# SearXNG for the OSINT platform: an internal JSON search API used by the
+# dork_search connector (not exposed to the internet).
+# Docs: https://docs.searxng.org/admin/settings/
+use_default_settings: true
+
+general:
+  instance_name: "osint-search"
+  enable_metrics: false
+
+server:
+  # Overridden by SEARXNG_SECRET in docker-compose.
+  secret_key: "change-me"
+  limiter: false          # internal service, called by the app only
+  image_proxy: false
+  public_instance: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 6.0
+  max_request_timeout: 12.0
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
+
+# Engines with the best recall for OSINT mentions. Others stay at their defaults.
+engines:
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: startpage
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: wikipedia
+    disabled: false

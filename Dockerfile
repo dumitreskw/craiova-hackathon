@@ -9,8 +9,12 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
+# --- Lightpanda (headless browser for fast page reading) ---------------------------
+FROM lightpanda/browser@sha256:5d1d724c476957d8c2f8393a51fd089477523b0e5aa9c783c48688785d934fb9 AS lightpanda
+
 # --- backend ---------------------------------------------------------------------
-FROM python:3.12-slim-bookworm AS app
+# trixie: Lightpanda's binary is built against Debian 13's glibc.
+FROM python:3.12-slim-trixie AS app
 COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /uvx /bin/
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -30,11 +34,21 @@ RUN uv sync --frozen --no-dev --extra evidence --no-install-project
 # Chromium + its system libraries, for screenshot evidence.
 RUN playwright install --with-deps --only-shell chromium && rm -rf /var/lib/apt/lists/*
 
+# Field tools from the Kali workflow, same versions as the Kali VM.
+ARG SUBFINDER_VERSION=2.16.0
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates     && curl -fsSL -o /tmp/subfinder.zip        "https://github.com/projectdiscovery/subfinder/releases/download/v${SUBFINDER_VERSION}/subfinder_${SUBFINDER_VERSION}_linux_amd64.zip"     && unzip -o /tmp/subfinder.zip subfinder -d /usr/local/bin && rm /tmp/subfinder.zip     && apt-get purge -y unzip && rm -rf /var/lib/apt/lists/*
+ENV UV_TOOL_DIR=/opt/tools UV_TOOL_BIN_DIR=/usr/local/bin
+RUN uv tool install "dnstwist==20250130" --with dnspython     && uv tool install "holehe==1.61"     && uv tool install "maigret==0.6.6"
+COPY --from=lightpanda /bin/lightpanda /usr/local/bin/lightpanda
+ENV LIGHTPANDA_DISABLE_TELEMETRY=true
+
 COPY backend/ ./
 COPY --from=frontend /src/frontend/dist /srv/frontend
 
-RUN useradd --system --uid 10001 --home /srv osint \
+# A real home: subfinder and Lightpanda keep their config/state there.
+RUN useradd --system --uid 10001 --create-home --home-dir /home/osint osint \
     && mkdir -p /data && chown osint /data
+ENV HOME=/home/osint
 USER osint
 VOLUME ["/data"]
 EXPOSE 8000 8787

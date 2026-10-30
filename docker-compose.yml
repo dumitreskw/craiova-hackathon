@@ -36,10 +36,28 @@ services:
     env_file: .env
     environment:
       OSINT_DATA_DIR: /data
+      SEARXNG_URL: http://searxng:8080
     volumes:
       - osint_data:/data
     # Chromium needs more than the default 64 MB of shared memory.
     shm_size: "512m"
+    depends_on:
+      - searxng
+
+  # Metasearch for dork_search: one internal JSON API over Brave, Bing, Google,
+  # Startpage, Mojeek... Not exposed outside the compose network.
+  searxng:
+    image: searxng/searxng:2026.10.30-ffa88e3ba
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-change-me-in-env}
+      SEARXNG_BASE_URL: http://searxng:8080/
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETGID", "SETUID"]
 
   mcp:
     build: .
@@ -52,6 +70,7 @@ services:
     environment:
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8787"
+      SEARXNG_URL: http://searxng:8080
       # Never expose the active tool on the public endpoint (no scope to check).
       MCP_ALLOW_ACTIVE: "0"
     depends_on:

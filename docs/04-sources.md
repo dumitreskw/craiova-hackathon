@@ -91,6 +91,51 @@ official listing. This is to avoid falsely branding an innocent namesake.
 | `bucket_finder`    | Naming permutations for S3/GCS/Azure    | Org/Domain → open buckets                       | **A** |
 | `docker_hub` / `npm` / `pypi` | Package registries           | Org/Username → published packages               | P |
 
+## Implemented now (beyond the original list)
+
+Brought over from the Kali field setup (same tools, same API keys), plus the
+search and page-reading stack. Cost: **free**, **metered** (monthly quota, the
+ledger refuses calls past it), **paid** (credits per call). *Seed-only*
+connectors run on the investigation's own targets only, never on entities a
+scan stumbles on.
+
+| Connector | Source | Input → Output | Cost | Notes |
+|---|---|---|---|---|
+| `subfinder` | ~40 passive sources (CT, passive DNS, search APIs) with our keys | Domain → subdomains | free | 30-60 s; widest subdomain coverage |
+| `urlscan` | urlscan.io scan index | Domain → historical pages, IPs, ASNs, servers | free (key) | <1 s |
+| `otx_domain` / `otx_ip` | AlienVault OTX passive DNS | Domain ↔ IP history | free (key) | finds subdomains CT logs miss |
+| `dnstwist` | permutation engine + public DNS | Domain → registered look-alikes (+MX = phishing risk) | free | seed-only, ~25 s |
+| `hunter` / `tomba` | Hunter.io / Tomba.io indexes | Domain → emails, names, roles, address pattern | metered (50 / 25 a month) | seed-only; their "organisation" field is unreliable, kept as a label only |
+| `dehashed` | DeHashed breach index | Email/username/domain → breach names + data classes | paid | seed-only; values (passwords, hashes, other PII) dropped before storage |
+| `holehe` | services' signup/recovery endpoints | Email → services it is registered on | free | seed-only |
+| `maigret` | top ~300 sites | Username → profiles | free | seed-only, ~30 s; search pages filtered out |
+| `dork_search` | **SearXNG** (self-hosted metasearch), DuckDuckGo fallback | query → URLs | free | 40 merged results in ~2 s |
+| `web_read` | **Firecrawl** → **Lightpanda** → plain HTTP | URL → page text (markdown), emails, social profiles, JSON-LD/OpenGraph | free | ~0.5-2 s with Lightpanda; target-owned hosts follow active rules |
+| `screenshot` | headless Chromium | URL → banner-stamped PNG evidence | free | target-owned hosts follow active rules |
+
+### Why SearXNG, Lightpanda and Firecrawl
+
+- **SearXNG — search that doesn't fall over.** The original `dork_search`
+  scraped DuckDuckGo's lite page, which throttles a server IP within a few
+  queries. SearXNG runs inside the stack and fans one query out to Brave,
+  Bing, Google, Startpage, Mojeek and others, ranks by agreement, and keeps
+  working when individual engines block us. It needs no API keys and keeps
+  queries off third-party SaaS. Measured: 40 relevant results in ~2 s where the
+  DuckDuckGo scraper returned errors.
+- **Lightpanda — reading pages fast.** Search snippets are not evidence; the
+  agents now read the pages behind them (`read_page`). Lightpanda is a
+  headless browser built for machines: it runs the page's JavaScript, starts
+  in milliseconds and emits markdown directly. Measured in the stack: a
+  Wikipedia article in 495 ms, 27k characters, against 9k from plain HTTP
+  (no JS). It has no graphical renderer, so screenshots stay on Chromium.
+- **Firecrawl — the premium reader, optional.** Best markdown and anti-bot
+  handling on its hosted API; also self-hostable. It is heavy to self-host
+  (API, workers, Playwright, Redis, RabbitMQ, Postgres), so it is not in the
+  default stack: set `FIRECRAWL_API_KEY` (hosted) or `FIRECRAWL_API_URL`
+  (your own instance) and `web_read` uses it first, falling back to
+  Lightpanda and then HTTP. Next step: its `map` endpoint for site discovery
+  under active mode.
+
 ## Pivot map (which entity triggers which connectors)
 
 ```text

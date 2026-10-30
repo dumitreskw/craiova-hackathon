@@ -31,7 +31,8 @@ flowchart LR
 | Service | Image | Role |
 |---|---|---|
 | `caddy` | `caddy:2.8.4` | Automatic HTTPS, basic auth for everyone, sets `X-Analyst` from the login (the audit log's "who"), unbuffered SSE. |
-| `app` | built from `Dockerfile` | FastAPI API + built frontend at `/`, quick scan, Claude agents, Chromium for screenshots. Data in the `osint_data` volume (`/data`). |
+| `app` | built from `Dockerfile` | FastAPI API + built frontend at `/`, quick scan, Claude agents. Bundles Chromium (screenshots), Lightpanda (page reading), subfinder, dnstwist, holehe and maigret. Data in the `osint_data` volume (`/data`). |
+| `searxng` | `searxng/searxng` | Internal metasearch API for `dork_search` (settings in `searxng/settings.yml`); not reachable from outside. |
 | `mcp` | same image | The OSINT MCP server at `/mcp`, for analysts working from Claude Code. Passive tools only (`MCP_ALLOW_ACTIVE=0`): it has no investigation scope to check. |
 | `egress` | `qmcgaw/gluetun` (profile `egress`) | Optional VPN exit. Connector and screenshot traffic goes through it when `OSINT_HTTP_PROXY=http://egress:8888`. Claude API traffic does not. |
 
@@ -59,6 +60,18 @@ Open `https://osint.example.com`, log in, create an investigation.
 
 For a local run of the whole stack, set `OSINT_DOMAIN=localhost` (Caddy uses
 its internal CA; accept the certificate warning).
+
+## API keys and quotas
+
+Each connector skips cleanly when its key is missing (`GET /api/v1/connectors`
+shows what is available and how much of each monthly quota is used). Metered
+sources (Hunter 50/month, Tomba 25/month) are enforced by the ledger across
+all investigations; paid ones (DeHashed) only run when an investigation or an
+agent run opts into `costly_connectors: "all"`.
+
+For local development without the tools installed, `OSINT_KALI_SSH=kali` in
+`backend/.env` runs subfinder, dnstwist, holehe and maigret on the Kali VM
+over ssh, and `OSINT_LIGHTPANDA_CMD` can point at the Lightpanda Docker image.
 
 ## Egress from the target's country
 

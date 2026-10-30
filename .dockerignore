@@ -1,6 +1,9 @@
 .git
 .github
-.env
+# Never bake env files (secrets, local overrides) into the image.
+**/.env
+**/.env.*
+!.env.example
 **/.venv
 **/__pycache__
 **/.pytest_cache
