@@ -43,6 +43,7 @@ def create_app(platform: Platform | None = None) -> FastAPI:
         p = platform or Platform()
         app.state.platform = p
         purge_expired(p.db, p.settings)
+        p.social.start()  # schedules social watches
         yield
         p.close()
         await aclose()

@@ -27,6 +27,8 @@ class Settings:
     # Deep-analysis workers: high-volume lookups on a cheaper model (docs/02).
     worker_model: str = "claude-sonnet-5-5"
     agent_progress_updates: bool = True
+    # Shared secret of the Kali social worker (kali-worker/); unset = worker API off.
+    worker_token: str | None = None
 
     @property
     def db_path(self) -> Path:
@@ -67,4 +69,5 @@ def load_settings() -> Settings:
         agent_model=os.environ.get("OSINT_AGENT_MODEL", "claude-opus-5-5"),
         worker_model=os.environ.get("OSINT_WORKER_MODEL", "claude-sonnet-5-5"),
         agent_progress_updates=os.environ.get("OSINT_AGENT_PROGRESS_UPDATES", "1") != "0",
+        worker_token=os.environ.get("OSINT_WORKER_TOKEN") or None,
     )

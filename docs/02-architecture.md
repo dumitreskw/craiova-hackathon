@@ -118,6 +118,38 @@ articles, public profiles, search hits — that host is a third-party site, not
 the target's infrastructure. Capturing the target's own site stays under the
 same active-mode rules as `http_probe`.
 
+### Social capture (personas on the Kali VM)
+
+Some public profiles (LinkedIn, Facebook, Instagram, X, TikTok …) show only a
+teaser to logged-out visitors. To capture them as an investigator would, the
+platform uses research accounts ("personas") whose logged-in browser sessions
+live on the **Kali VM**. Because the VPS cannot reach Kali, a small worker
+(`kali-worker/`) connects *out* to the platform, long-polls for capture jobs,
+runs them with Playwright and the persona's saved profile, and posts the result
+back. Session cookies never leave Kali — the platform stores only each
+persona's name, platform, region and health.
+
+A capture goes through `app/social.py` and `Ledger.record`, so it is a
+`social_capture` finding with the same audit, sha256 and provenance as any
+connector: a banner-stamped PNG plus the page HTML, visible text and a few
+profile fields, folded into the graph as the `SocialProfile`'s evidence. It is
+treated as **passive** (viewing a public page), but is deliberately constrained:
+
+- **look, don't touch** — the worker loads, scrolls and screenshots; it never
+  follows, likes, comments, messages, joins, or creates accounts;
+- **only profiles already in the graph** (a target, or found by a lookup) can be
+  captured — not arbitrary URLs;
+- **VPN-gated** — refused unless Mullvad is up, in the persona's own region, so
+  a persona is never seen from the wrong IP;
+- **low volume** — a per-persona hourly cap; logged-out first, a persona only at
+  a login wall or when explicitly chosen.
+
+A **watch** re-captures a profile on a schedule and diffs each snapshot against
+the last (bio, counts, new/removed lines), raising a `social.changed` event and
+a note on the finding. Personas are logged in once, by hand, in a visible
+browser on Kali's desktop (a `login` job); terms-of-service and ban risk make
+every persona disposable.
+
 ### 4. Deep analysis (orchestrated multi-agent)
 
 The user asks for a deep analysis and gives minimal seed info — a name, URL,

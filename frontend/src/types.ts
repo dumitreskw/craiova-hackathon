@@ -254,3 +254,85 @@ export interface Material {
   duplicate?: boolean;
   markdown?: string;
 }
+
+// --- Social personas & capture (app/social.py) -----------------------------
+
+export type PersonaStatus = "ok" | "needs_login" | "disabled";
+
+export interface Persona {
+  id: string;
+  name: string;
+  platform: string;
+  region: string;
+  status: PersonaStatus;
+  note: string | null;
+  created_by: string;
+  created_at: string;
+  status_at: string | null;
+  last_used: string | null;
+  captures_last_hour?: number;
+}
+
+export interface SocialStatus {
+  online: boolean;
+  last_seen: string | null;
+  version?: string;
+  vpn?: { connected?: boolean; country?: string; city?: string };
+  egress?: { ip?: string; city?: string; country?: string; mullvad?: boolean };
+  busy?: boolean;
+  queued: number;
+  personas: Persona[];
+}
+
+export type SocialJobKind = "capture" | "login" | "check";
+export type SocialJobStatus = "queued" | "running" | "done" | "failed" | "expired";
+
+export interface SocialJob {
+  id: string;
+  kind: SocialJobKind;
+  status: SocialJobStatus;
+  persona: string | null;
+  mode: "auto" | "persona" | "anonymous";
+  url: string | null;
+  investigation_id: string | null;
+  entity_id: string | null;
+  watch_id: string | null;
+  requested_by: string;
+  run_by: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  finding_id: string | null;
+  result: { login_wall?: boolean; persona_used?: string | null; session?: string };
+}
+
+export interface SocialWatch {
+  id: string;
+  investigation_id: string;
+  entity_id: string | null;
+  url: string;
+  persona: string | null;
+  interval_hours: number;
+  active: boolean;
+  created_by: string;
+  created_at: string;
+  last_run_at: string | null;
+  last_finding_id: string | null;
+  last_error: string | null;
+}
+
+export interface SocialCaptureResult {
+  finding: Finding | null;
+  raw: {
+    final_url?: string;
+    platform?: string;
+    login_wall?: boolean;
+    logged_in?: boolean;
+    persona?: string | null;
+    blocked?: boolean;
+    profile?: Record<string, string | number>;
+    changes?: { count?: number; since?: string; fields?: Record<string, [unknown, unknown]>; new_lines?: string[]; removed_lines?: string[] };
+  } | null;
+  note: string | null;
+}

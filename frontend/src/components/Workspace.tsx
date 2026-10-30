@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
-  Activity, Bot, FileText, ListChecks, Network, Paperclip, Plus, RotateCw, ScrollText, X, type LucideIcon,
+  Activity, Bot, FileText, ListChecks, Network, Paperclip, Plus, RotateCw, ScrollText, Users, X, type LucideIcon,
 } from "lucide-react";
 import { api } from "../api";
 import { ENTITY_TYPES } from "../entityStyle";
@@ -14,14 +14,16 @@ import { GraphView } from "./GraphView";
 import { MaterialsView } from "./MaterialsView";
 import { ReportsView } from "./ReportsView";
 import { RunsView } from "./RunsView";
+import { SocialView } from "./SocialView";
 import { Badge, ErrorBoundary, ErrorBox, Loading, useLoad } from "./ui";
 
-export const TABS = ["graph", "material", "activity", "agents", "runs", "reports", "audit"] as const;
+export const TABS = ["graph", "material", "social", "activity", "agents", "runs", "reports", "audit"] as const;
 export type Tab = (typeof TABS)[number];
 
 const TAB_META: Record<Tab, [string, LucideIcon]> = {
   graph: ["Graph", Network],
   material: ["Material", Paperclip],
+  social: ["Social", Users],
   activity: ["Activity", Activity],
   agents: ["Claude agents", Bot],
   runs: ["Runs", ListChecks],
@@ -161,6 +163,7 @@ export function Workspace({ id, tab, onChanged }: { id: string; tab: Tab; onChan
       {tab === "activity" && <ActivityFeed events={stream.events} onSelect={openEntity} />}
       {tab === "agents" && <AgentsPanel investigation={inv} stream={stream} />}
       {tab === "material" && <MaterialsView investigationId={id} stream={stream} />}
+      {tab === "social" && <SocialView investigationId={id} stream={stream} />}
       {tab === "runs" && <RunsView investigationId={id} stream={stream} />}
       {tab === "reports" && <ReportsView investigationId={id} stream={stream} />}
       {tab === "audit" && <AuditView investigationId={id} />}

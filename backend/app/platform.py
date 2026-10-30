@@ -11,6 +11,7 @@ from .events import EventBus
 from .ledger import Ledger
 from .models import Database
 from .scan import QuickScan
+from .social import SocialHub
 
 
 class Platform:
@@ -22,6 +23,8 @@ class Platform:
         self.ledger = Ledger(self.db, self.bus, self.settings)
         self.resolver = self.ledger.resolver
         self.scan = QuickScan(self.ledger)
+        # Persona captures through the Kali worker (app/social.py).
+        self.social = SocialHub(self.ledger)
         self.agents = AgentRunner(
             self.ledger,
             model_factory or (lambda: AnthropicModel(
@@ -31,6 +34,7 @@ class Platform:
         self.agents.model_factory_is_default = model_factory is None
 
     def close(self) -> None:
+        self.social.stop()
         for task in [*self.scan.tasks.values(), *self.agents.tasks.values()]:
             task.cancel()
         self.db.close()

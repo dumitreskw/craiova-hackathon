@@ -154,6 +154,58 @@ CREATE TABLE IF NOT EXISTS materials (
     created_at       TEXT NOT NULL
 );
 
+-- Research accounts ("personas") for social-media capture (app/social.py).
+-- Only metadata: the logged-in browser profiles stay on the Kali VM.
+CREATE TABLE IF NOT EXISTS personas (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    platform    TEXT NOT NULL,                            -- linkedin | facebook | instagram | x | ...
+    region      TEXT NOT NULL,                            -- Mullvad location it always uses, e.g. de-fra
+    status      TEXT NOT NULL DEFAULT 'needs_login',      -- ok | needs_login | disabled
+    note        TEXT,
+    created_by  TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    status_at   TEXT,
+    last_used   TEXT
+);
+
+-- Work for the Kali worker, which polls for it (it can't be reached from here).
+CREATE TABLE IF NOT EXISTS social_jobs (
+    id               TEXT PRIMARY KEY,
+    kind             TEXT NOT NULL,                       -- capture | login | check
+    status           TEXT NOT NULL,                       -- queued | running | done | failed | expired
+    persona          TEXT,
+    mode             TEXT NOT NULL DEFAULT 'auto',        -- auto | persona | anonymous
+    url              TEXT,
+    investigation_id TEXT REFERENCES investigations(id),
+    entity_id        TEXT,
+    watch_id         TEXT,
+    requested_by     TEXT NOT NULL,
+    run_by           TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    started_at       TEXT,
+    finished_at      TEXT,
+    error            TEXT,
+    finding_id       TEXT,
+    result           TEXT NOT NULL DEFAULT '{}'
+);
+
+-- Profiles re-captured on a schedule; each snapshot is diffed with the last.
+CREATE TABLE IF NOT EXISTS social_watches (
+    id               TEXT PRIMARY KEY,
+    investigation_id TEXT NOT NULL REFERENCES investigations(id),
+    entity_id        TEXT,
+    url              TEXT NOT NULL,
+    persona          TEXT,
+    interval_hours   INTEGER NOT NULL,
+    active           INTEGER NOT NULL DEFAULT 1,
+    created_by       TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    last_run_at      TEXT,
+    last_finding_id  TEXT,
+    last_error       TEXT
+);
+
 -- Append-only: who queried what, when, why, and whether it was allowed.
 CREATE TABLE IF NOT EXISTS audit (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -176,10 +228,11 @@ CREATE INDEX IF NOT EXISTS ix_entities_inv ON entities(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_edges_inv ON edges(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_audit_inv ON audit(investigation_id, ts);
 CREATE INDEX IF NOT EXISTS ix_materials_inv ON materials(investigation_id);
+CREATE INDEX IF NOT EXISTS ix_social_jobs_status ON social_jobs(status, created_at);
 """
 
 JSON_COLUMNS = {"settings", "input", "attributes", "stats", "body", "detail",
-                "transcript", "digest"}
+                "transcript", "digest", "result"}
 
 # Columns added after the first release: (table, column, DDL). Applied on open,
 # so an existing database file keeps working.

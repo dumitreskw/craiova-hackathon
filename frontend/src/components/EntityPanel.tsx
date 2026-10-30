@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import {
-  Camera, Check, FileSearch, Link2, NotebookPen, Search, ShieldAlert, X,
+  Camera, Check, FileSearch, Link2, NotebookPen, Search, ShieldAlert, Users, X,
 } from "lucide-react";
 import { api } from "../api";
 import { typeColor } from "../entityStyle";
@@ -38,7 +38,7 @@ export function EntityPanel({
   const [connectors] = useLoad(() => api.get<Connector[]>("/connectors"), []);
   const [finding, setFinding] = useState<string | null>(null);
   const [action, setAction] = useState<"confirm" | "reject" | "pivot" | "note" | null>(null);
-  const [busy, setBusy] = useState<"read" | "capture" | null>(null);
+  const [busy, setBusy] = useState<"read" | "capture" | "social" | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
 
   async function urlAction(kind: "read" | "capture", url: string, id: string) {
@@ -46,6 +46,19 @@ export function EntityPanel({
     setActionError(null);
     try {
       await api.post(`/investigations/${investigationId}/${kind}`, { url, entity_id: id });
+      reload();
+    } catch (err) {
+      setActionError(err);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function captureProfile(url: string, id: string) {
+    setBusy("social");
+    setActionError(null);
+    try {
+      await api.post(`/investigations/${investigationId}/social/capture`, { url, entity_id: id });
       reload();
     } catch (err) {
       setActionError(err);
@@ -127,6 +140,13 @@ export function EntityPanel({
               {busy === "capture" ? <Spinner className="h-3.5 w-3.5" /> : <Camera className="h-3.5 w-3.5" aria-hidden />}Capture evidence
             </button>
           </>
+        )}
+        {ent.type === "SocialProfile" && typeof ent.attributes.url === "string" &&
+          /^https?:\/\//.test(ent.attributes.url) && (
+          <button className="btn btn-sm" disabled={busy !== null}
+            onClick={() => captureProfile(ent.attributes.url as string, ent.id)}>
+            {busy === "social" ? <Spinner className="h-3.5 w-3.5" /> : <Users className="h-3.5 w-3.5" aria-hidden />}Capture (persona)
+          </button>
         )}
         <button className="btn btn-quiet btn-sm" onClick={() => setAction("note")}><NotebookPen className="h-3.5 w-3.5" aria-hidden />Add note</button>
       </div>

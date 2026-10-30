@@ -199,8 +199,8 @@ def _evidence_rows(db: Database, numbers: dict[str, int]) -> list[dict]:
 
 
 def _screenshot(db: Database, finding: dict, evidence_dir: Path | None) -> Path | None:
-    """The PNG behind a screenshot finding, if it is on disk."""
-    if finding["connector"] != "screenshot" or evidence_dir is None:
+    """The PNG behind a screenshot / social-capture finding, if it is on disk."""
+    if finding["connector"] not in ("screenshot", "social_capture") or evidence_dir is None:
         return None
     doc = db.one("SELECT e.attributes FROM entity_sources es JOIN entities e ON "
                  "e.id = es.entity_id WHERE es.finding_id = ? AND e.type = 'Document'",

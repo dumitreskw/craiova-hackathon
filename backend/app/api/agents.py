@@ -103,7 +103,7 @@ async def read(investigation_id: str, body: CaptureRequest,
 @router.get("/findings/{finding_id}/screenshot")
 async def finding_screenshot(finding_id: str, p: Platform = Depends(get_platform)):
     f = p.db.get("findings", finding_id)
-    if f is None or f["connector"] != "screenshot" or not f["raw_path"]:
+    if f is None or f["connector"] not in ("screenshot", "social_capture") or not f["raw_path"]:
         raise HTTPException(404, "no screenshot for this finding")
     load_investigation(p, f["investigation_id"])
     doc = p.db.one(
