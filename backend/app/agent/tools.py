@@ -26,10 +26,11 @@ from connectors.base import EntityType
 
 from .. import report as rep
 from ..detect import DetectError, canonical_key, normalize_name
-from ..evidence import capture
+from ..evidence import capture, read_page
 from ..ledger import Ledger, RunOutcome
 from ..models import new_id, now
 from ..resolver import entity_view
+from ..scan import COST_TIERS
 
 MAX_RESULT_CHARS = 8000
 LEGAL = rep.LEGAL_CONNECTORS
@@ -104,8 +105,15 @@ LIST_ENTITIES = _tool(
      "limit": {"type": "integer", "minimum": 1, "maximum": 200}}, [])
 GET_FINDING = _tool(
     "get_finding",
-    "One finding (a connector call): connector, input, time, hash, and an excerpt of the "
-    "raw payload.", {"finding_id": {"type": "string"}}, ["finding_id"])
+    "One finding (a connector call): connector, input, time, hash, and its content: the "
+    "page text for read pages, otherwise an excerpt of the raw payload.",
+    {"finding_id": {"type": "string"}}, ["finding_id"])
+LIST_FINDINGS = _tool(
+    "list_findings",
+    "Every lookup made in this investigation: finding id, connector, what was looked up, "
+    "page title for read pages, and any note or error. Read pages hold most of the facts "
+    "about organisations and people; open them with get_finding.",
+    {"connector": {"type": "string", "description": "filter, e.g. web_read"}}, [])
 CAPTURE_EVIDENCE = _tool(
     "capture_evidence",
     "Screenshot a web page as evidence (banner with source URL and capture time). Returns "
@@ -119,18 +127,37 @@ SUBMIT_REPORT = _tool(
     "fixed and the report resubmitted.", {"report": REPORT_SCHEMA}, ["report"])
 
 
-def connector_tools(investigation: dict) -> list[dict]:
+READ_PAGE = _tool(
+    "read_page",
+    "Read a web page (search hit, profile, article, registry page): its text as markdown, "
+    "emails, social links and structured data. Use it to check what a search snippet "
+    "suggests before relying on it. Refused for the target's own hosts unless authorized.",
+    {"url": {"type": "string"},
+     "entity_id": {"type": "string", "description": "entity the page is about, if any"}},
+    ["url"])
+
+
+def connector_tools(investigation: dict, costly: str = "metered") -> list[dict]:
+    tiers = COST_TIERS.get(costly, COST_TIERS["none"])
     tools = []
     for name in sorted(connectors.REGISTRY):
         spec = connectors.REGISTRY[name]
-        if name == "screenshot":
-            continue  # evidence is the report agent's job
+        if name in ("screenshot", "web_read"):
+            continue  # screenshot is the report agent's; web_read is read_page below
         if not spec.passive and investigation.get("mode") != "active":
             continue  # the gate would refuse it anyway; don't offer it
+        if spec.cost not in tiers:
+            continue
         mode = "Passive." if spec.passive else (
             "ACTIVE: contacts the target; only for in-scope hosts.")
         if name in LEGAL:
             mode += " Screening: only for the investigation's own targets; hits are unverified."
+        elif spec.seed_only:
+            mode += " Only for the investigation's own targets."
+        if spec.cost == "metered":
+            mode += f" Uses a small monthly quota ({spec.quota}): once per target at most."
+        elif spec.cost == "paid":
+            mode += " Spends paid credits: only when the goal needs it."
         if name == "dork_search":
             props = {"query": {"type": "string", "description": "query or dork, e.g. "
                                "'\"Jane Doe\" site:linkedin.com'"},
@@ -142,12 +169,14 @@ def connector_tools(investigation: dict) -> list[dict]:
                  **EXTRA_PARAMS.get(name, {})}
         tools.append(_tool(name, f"{spec.description} Input: {spec.accepts.value}. {mode}",
                            props, ["value"]))
-    return tools + [GET_ENTITY, GRAPH_OVERVIEW]
+    if "web_read" in connectors.REGISTRY:
+        tools.append(READ_PAGE)
+    return sorted(tools, key=lambda t: t["name"]) + [GET_ENTITY, GRAPH_OVERVIEW]
 
 
 def report_tools() -> list[dict]:
     tools = [CAPTURE_EVIDENCE, GET_ENTITY, GET_FINDING, GRAPH_OVERVIEW, LIST_ENTITIES,
-             SUBMIT_REPORT]
+             LIST_FINDINGS, SUBMIT_REPORT]
     if "screenshot" not in connectors.REGISTRY:
         tools.remove(CAPTURE_EVIDENCE)
     return sorted(tools, key=lambda t: t["name"])
@@ -198,7 +227,7 @@ class ToolBox:
         if not isinstance(args, dict):
             return json.dumps({"INVALID_JSON": json.dumps(args, default=str)}), True
         try:
-            if name in connectors.REGISTRY and name != "screenshot":
+            if name in connectors.REGISTRY and name not in ("screenshot", "web_read"):
                 return await self._connector(name, args), False
             handler = getattr(self, f"_t_{name}", None)
             if handler is None:
@@ -215,10 +244,13 @@ class ToolBox:
                             "lookup tools; write your final summary now.")
         self.calls += 1
 
-    def _target_keys(self) -> set[str]:
-        return {normalize_name(t["value"]) for t in self.db.query(
-            "SELECT value FROM targets WHERE investigation_id = ? AND type IN "
-            "('Person', 'Organization')", (self.inv_id,))}
+    def _target_keys(self, etype: EntityType) -> set[str]:
+        rows = self.db.query(
+            "SELECT t.value, e.key FROM targets t LEFT JOIN entities e ON e.id = t.entity_id "
+            "WHERE t.investigation_id = ? AND t.type = ?", (self.inv_id, etype.value))
+        if etype in (EntityType.PERSON, EntityType.ORGANIZATION):
+            return {normalize_name(r["value"]) for r in rows}
+        return {r["key"] for r in rows if r["key"]}
 
     def _find_entity(self, etype: str, key: str) -> str | None:
         row = self.db.one("SELECT id FROM entities WHERE investigation_id = ? AND type = ? "
@@ -245,11 +277,11 @@ class ToolBox:
                     key = arg = canonical_key(spec.accepts, value)
                 except (DetectError, ValueError, UnicodeError) as e:
                     raise ToolError(f"'{value}' is not a valid {spec.accepts.value}: {e}") from e
-            if name in LEGAL and key not in self._target_keys():
+            if (name in LEGAL or spec.seed_only) and key not in self._target_keys(spec.accepts):
+                what = "Screening" if name in LEGAL else f"'{name}'"
                 raise ToolError(
-                    f"Screening is limited to this investigation's targets; '{value}' is not "
-                    "one. If screening this person or organization serves the purpose, the "
-                    "analyst can add them as a target.")
+                    f"{what} is limited to this investigation's own targets; '{value}' is not "
+                    "one. If it serves the purpose, the analyst can add it as a target.")
             entity_id = self._find_entity(spec.accepts.value, key)
             for extra in EXTRA_PARAMS.get(name, {}):
                 if extra in args:
@@ -346,10 +378,66 @@ class ToolBox:
             if path.exists():
                 raw = json.loads(path.read_text(encoding="utf-8")).get("raw")
         keep = ("id", "connector", "input", "fetched_at", "sha256", "note", "error")
+        if f["connector"] == "web_read" and isinstance(raw, dict):
+            text = raw.get("markdown") or ""
+            return json.dumps({**{k: f[k] for k in keep}, "url": raw.get("final_url"),
+                               "title": raw.get("title"), "emails": raw.get("emails"),
+                               "socials": raw.get("socials"),
+                               "text": text[:12000] + (" [...]" if len(text) > 12000 else "")},
+                              default=str, ensure_ascii=False)
         return _dump({**{k: f[k] for k in keep},
                       "raw_excerpt": json.dumps(raw, default=str, ensure_ascii=False)[:5000]})
 
+    async def _t_list_findings(self, args: dict) -> str:
+        sql = ("SELECT id, connector, input, fetched_at, note, error FROM findings "
+               "WHERE investigation_id = ?")
+        params: list = [self.inv_id]
+        if args.get("connector"):
+            sql += " AND connector = ?"
+            params.append(str(args["connector"]))
+        rows = self.db.query(sql + " ORDER BY fetched_at", params)
+        out = []
+        for f in rows[:300]:
+            item = {"id": f["id"], "connector": f["connector"],
+                    "looked_up": (f["input"] or {}).get("arg"), "at": f["fetched_at"]}
+            if f["note"]:
+                item["note"] = f["note"][:200]
+            if f["error"]:
+                item["error"] = f["error"][:120]
+            if f["connector"] in ("web_read", "screenshot"):
+                title = self.db.one(
+                    "SELECT e.attributes FROM entity_sources es JOIN entities e ON "
+                    "e.id = es.entity_id WHERE es.finding_id = ? AND e.type = 'URL'", (f["id"],))
+                if title:
+                    t = (title["attributes"].get("title") or [{}])[0].get("value")
+                    if t:
+                        item["title"] = t
+            out.append(item)
+        return _dump(out)
+
     # --- evidence & report ------------------------------------------------------
+
+    async def _t_read_page(self, args: dict) -> str:
+        url = _str(args, "url", max_len=2000)
+        about = _str(args, "entity_id", required=False, max_len=40)
+        if about:
+            row = self.db.get("entities", about)
+            about = about if row and row["investigation_id"] == self.inv_id else None
+        self._spend()
+        outcome = await read_page(self.ledger, self.investigation, url, user=self.user,
+                                  run_by=self.run_id, entity_id=about)
+        if outcome.refused:
+            raise ToolError(f"Refused by the platform: {outcome.error}")
+        if outcome.error:
+            raise ToolError(f"Read failed (finding {outcome.finding_id}): {outcome.error}")
+        self.findings.append(outcome.finding_id)
+        raw = outcome.result.raw
+        text = raw.get("markdown") or ""
+        return _dump({"finding_id": outcome.finding_id, "url": raw.get("final_url"),
+                      "title": raw.get("title"), "emails": raw.get("emails"),
+                      "socials": raw.get("socials"),
+                      "structured_data": raw.get("structured_data"),
+                      "text": text[:6000] + (" [...]" if len(text) > 6000 else "")})
 
     async def _t_capture_evidence(self, args: dict) -> str:
         url = _str(args, "url", max_len=2000)

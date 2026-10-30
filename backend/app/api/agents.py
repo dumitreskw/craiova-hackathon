@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from ..agent import ensure_target
 from ..agent.model import configured
-from ..evidence import capture, screenshot_dir
+from ..evidence import capture, read_page, screenshot_dir
 from ..models.schemas import CaptureRequest, CollectRequest, ReportAgentRequest
 from ..platform import Platform
 from ..resolver import entity_view
@@ -32,7 +32,8 @@ async def collect(investigation_id: str, body: CollectRequest,
         raise HTTPException(422, f"could not detect the type of {body.target!r}")
     if not p.db.one("SELECT 1 AS x FROM targets WHERE investigation_id = ?", (investigation_id,)):
         raise HTTPException(422, "add a target first (or pass one as 'target')")
-    run_id = p.agents.start(inv, "collection", body.goal, user, body.max_tool_calls)
+    run_id = p.agents.start(inv, "collection", body.goal, user, body.max_tool_calls,
+                            body.costly_connectors)
     return {"run_id": run_id, "kind": "collection"}
 
 
@@ -67,6 +68,20 @@ async def capture_evidence(investigation_id: str, body: CaptureRequest,
     return {"finding": p.db.get("findings", outcome.finding_id),
             "raw": outcome.result.raw,
             "document": docs[0] if docs else None}
+
+
+@router.post("/investigations/{investigation_id}/read")
+async def read(investigation_id: str, body: CaptureRequest,
+               p: Platform = Depends(get_platform), user: str = Depends(current_user)):
+    """Read a page now (text, contacts, links, structured data) into the graph."""
+    inv = load_investigation(p, investigation_id)
+    outcome = await read_page(p.ledger, inv, body.url, user=user, run_by="analyst",
+                              entity_id=body.entity_id)
+    if outcome.refused:
+        raise HTTPException(403, outcome.error)
+    if outcome.error:
+        raise HTTPException(502, {"message": outcome.error, "finding_id": outcome.finding_id})
+    return {"finding": p.db.get("findings", outcome.finding_id), "raw": outcome.result.raw}
 
 
 @router.get("/findings/{finding_id}/screenshot")

@@ -7,6 +7,7 @@ import os
 from fastapi import APIRouter, Depends, Query
 
 import connectors
+from connectors import _cli
 
 from ..platform import Platform
 from ..retention import purge_expired
@@ -20,13 +21,27 @@ async def health():
     return {"ok": True}
 
 
+# Connectors backed by a command-line tool (bundled in the image or via the Kali VM).
+_CLI_TOOLS = {"subfinder": "subfinder", "dnstwist": "dnstwist", "holehe": "holehe",
+              "maigret": "maigret"}
+
+
 @router.get("/connectors")
-async def list_connectors():
-    return [{
-        "name": s.name, "accepts": s.accepts.value, "passive": s.passive,
-        "description": s.description, "requires_key": s.requires_key,
-        "key_configured": bool(os.environ.get(s.requires_key)) if s.requires_key else None,
-    } for s in connectors.REGISTRY.values()]
+async def list_connectors(p: Platform = Depends(get_platform)):
+    out = []
+    for s in connectors.REGISTRY.values():
+        available = bool(os.environ.get(s.requires_key)) if s.requires_key else True
+        if s.name in _CLI_TOOLS:
+            available = _cli.available(_CLI_TOOLS[s.name])
+        out.append({
+            "name": s.name, "accepts": s.accepts.value, "passive": s.passive,
+            "description": s.description, "requires_key": s.requires_key,
+            "key_configured": bool(os.environ.get(s.requires_key)) if s.requires_key else None,
+            "available": available, "cost": s.cost, "seed_only": s.seed_only,
+            "quota": s.quota, "quota_days": s.quota_days if s.quota else None,
+            "quota_used": p.ledger.quota_used(s.name, s.quota_days) if s.quota else None,
+        })
+    return out
 
 
 @router.get("/audit")

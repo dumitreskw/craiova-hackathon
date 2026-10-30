@@ -48,7 +48,7 @@ class AgentRunner:
     # --- lifecycle --------------------------------------------------------------
 
     def start(self, investigation: dict, kind: str, goal: str, user: str,
-              max_tool_calls: int) -> str:
+              max_tool_calls: int, costly: str = "metered") -> str:
         run_id = new_id("ar")
         self.db.insert("agent_runs", {
             "id": run_id, "investigation_id": investigation["id"], "kind": kind,
@@ -59,7 +59,7 @@ class AgentRunner:
                       investigation_id=investigation["id"],
                       detail={"run_id": run_id, "goal": goal, "max_tool_calls": max_tool_calls})
         task = asyncio.create_task(self.run(run_id, investigation, kind, goal, user,
-                                            max_tool_calls))
+                                            max_tool_calls, costly))
         self.tasks[run_id] = task
         task.add_done_callback(lambda _t: self.tasks.pop(run_id, None))
         return run_id
@@ -74,11 +74,12 @@ class AgentRunner:
     # --- the loop -----------------------------------------------------------------
 
     async def run(self, run_id: str, investigation: dict, kind: str, goal: str, user: str,
-                  max_tool_calls: int) -> dict:
+                  max_tool_calls: int, costly: str = "metered") -> dict:
         inv_id = investigation["id"]
         box = ToolBox(self.ledger, investigation, run_id, user, budget=max_tool_calls)
         if kind == "collection":
-            system, tools, effort = prompts.COLLECTION, connector_tools(investigation), "medium"
+            system, tools, effort = (prompts.COLLECTION, connector_tools(investigation, costly),
+                                     "medium")
         else:
             system, tools, effort = prompts.REPORT, report_tools(), "high"
         messages: list[dict] = [{"role": "user", "content": self._brief(investigation, kind,
@@ -194,6 +195,15 @@ class AgentRunner:
         if anchors:
             lines.append("The target's own domains: " + ", ".join(anchors))
         lines += [f"Goal: {goal}", f"Tool budget: {budget} calls."]
+        if kind == "report":
+            runs = self.db.query(
+                "SELECT goal, summary FROM agent_runs WHERE investigation_id = ? AND "
+                "kind = 'collection' AND status = 'finished' AND summary IS NOT NULL "
+                "ORDER BY started_at DESC LIMIT 3", (inv["id"],))
+            for r in runs:
+                lines.append(f"\nCollection agent notes (goal: {r['goal']}). These are "
+                             "leads that cite finding ids; verify against the findings "
+                             f"before you rely on them:\n{r['summary'][:6000]}")
         if kind == "collection":
             lines.append("Use graph_overview to see what earlier scans already found.")
         else:

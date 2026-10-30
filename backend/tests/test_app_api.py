@@ -54,7 +54,7 @@ async def test_draft_reports_legal_hits_as_unverified_and_no_match_as_fact(
     assert statuses == ["unverified", "unverified", "verified"]   # 2 hits + 1 "no match"
     assert not [i for i in rep.lint(platform.db, inv["id"], body) if i["level"] == "error"]
     md = rep.render(platform.db, inv, body, audience="client")
-    assert "unverified possible match" in md
+    assert "(unverified)" in md
 
 
 async def test_lint_catches_the_common_report_failures(platform, make_investigation):

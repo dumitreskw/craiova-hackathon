@@ -7,6 +7,8 @@ and ``Email`` entities parsed from SOA and DMARC/TXT records.
 
 from __future__ import annotations
 
+import asyncio
+import os
 import re
 
 import dns.asyncresolver
@@ -25,8 +27,11 @@ _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 async def dns_lookup(domain: str) -> ConnectorResult:
     domain = domain.strip().lower().rstrip(".")
-    resolver = dns.asyncresolver.Resolver()
-    resolver.lifetime = 10.0
+    # Public resolvers, not the host's (often slow) system configuration.
+    resolver = dns.asyncresolver.Resolver(configure=False)
+    resolver.nameservers = [s.strip() for s in os.environ.get(
+        "OSINT_DNS_RESOLVERS", "1.1.1.1,8.8.8.8,9.9.9.9").split(",") if s.strip()]
+    resolver.lifetime = 6.0
 
     records: dict[str, list[str]] = {}
     entities: list[EntityCandidate] = []
@@ -56,10 +61,15 @@ async def dns_lookup(domain: str) -> ConnectorResult:
             )
         )
 
-    for rtype in RECORD_TYPES:
+    async def query(rtype: str):
         try:
-            answer = await resolver.resolve(domain, rtype)
+            return rtype, await resolver.resolve(domain, rtype)
         except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.exception.DNSException):
+            return rtype, None
+
+    # All record types in parallel: one round trip instead of eight.
+    for rtype, answer in await asyncio.gather(*(query(t) for t in RECORD_TYPES)):
+        if answer is None:
             continue
 
         values = [r.to_text() for r in answer]

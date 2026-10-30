@@ -23,20 +23,34 @@ def screenshot_dir(ledger: Ledger, investigation_id: str):
     return ledger.settings.evidence_dir / investigation_id / "screenshots"
 
 
-async def capture(ledger: Ledger, investigation: dict, url: str, *, user: str, run_by: str,
-                  entity_id: str | None = None) -> RunOutcome:
+async def fetch_page(ledger: Ledger, investigation: dict, connector: str, url: str, *,
+                     user: str, run_by: str, entity_id: str | None = None,
+                     kwargs: dict | None = None) -> RunOutcome:
+    """Run a page-fetching connector (screenshot, web_read) with the target-host rule."""
     if not _URL.match(url):
         return RunOutcome(None, None, error="not an http(s) URL", refused=True)
     anchors = anchor_domains(ledger.db, investigation["id"], [])
     if anchors and guard.in_scope(url, anchors):
         try:
-            guard.check(investigation, "screenshot", False, url)
+            guard.check(investigation, connector, False, url)
         except guard.GateError as e:
             reason = f"{url} is on the target's own infrastructure: {e}"
-            ledger.db.audit(user=user, action="evidence.capture", outcome="refused",
-                            investigation_id=investigation["id"], connector="screenshot",
+            ledger.db.audit(user=user, action=f"{connector}.fetch", outcome="refused",
+                            investigation_id=investigation["id"], connector=connector,
                             target=url, detail={"reason": reason, "run_by": run_by})
             return RunOutcome(None, None, error=reason, refused=True)
+    return await ledger.run(investigation, connector, url, user=user, run_by=run_by,
+                            entity_id=entity_id, kwargs=kwargs)
+
+
+async def capture(ledger: Ledger, investigation: dict, url: str, *, user: str, run_by: str,
+                  entity_id: str | None = None) -> RunOutcome:
     out_dir = screenshot_dir(ledger, investigation["id"])
-    return await ledger.run(investigation, "screenshot", url, user=user, run_by=run_by,
+    return await fetch_page(ledger, investigation, "screenshot", url, user=user, run_by=run_by,
                             entity_id=entity_id, kwargs={"out_dir": str(out_dir)})
+
+
+async def read_page(ledger: Ledger, investigation: dict, url: str, *, user: str, run_by: str,
+                    entity_id: str | None = None) -> RunOutcome:
+    return await fetch_page(ledger, investigation, "web_read", url, user=user, run_by=run_by,
+                            entity_id=entity_id)

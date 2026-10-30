@@ -58,7 +58,7 @@ SOURCE_NAMES = {
 }
 
 STATUS_LABEL = {
-    "unverified": "unverified possible match",
+    "unverified": "unverified",
     "leaked": "leaked record, unverified",
     "inference": "analyst inference",
 }

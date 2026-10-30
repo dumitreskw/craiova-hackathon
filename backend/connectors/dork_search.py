@@ -30,6 +30,7 @@ from .base import (
 from ._http import get_client, retry
 
 MAX_RESULTS_PER_ENGINE = 15
+MAX_SEARXNG_RESULTS = 40
 
 
 @dataclass(slots=True)
@@ -118,8 +119,33 @@ async def _duckduckgo(query: str) -> list[Hit]:
     return await retry(fetch, attempts=3, base_delay=1.0)
 
 
+async def _searxng(query: str) -> list[Hit]:
+    """Self-hosted SearXNG metasearch (``SEARXNG_URL``): one JSON call fans out
+    to Brave, Bing, Google, Startpage, Mojeek... and ranks by agreement, so a
+    single engine throttling us doesn't empty the result."""
+    base = os.environ["SEARXNG_URL"].rstrip("/")
+    client = get_client()
+    hits: list[Hit] = []
+    for page in (1, 2):
+        resp = await client.get(f"{base}/search", timeout=20.0, params={
+            "q": query, "format": "json", "pageno": page, "safesearch": 0})
+        resp.raise_for_status()
+        data = resp.json()
+        for r in data.get("results", []):
+            if r.get("url"):
+                hits.append(Hit(url=r["url"], title=(r.get("title") or "")[:300],
+                                snippet=(r.get("content") or "")[:500],
+                                engine="searxng:" + ",".join(r.get("engines") or [])))
+        if len(hits) >= MAX_SEARXNG_RESULTS or not data.get("results"):
+            break
+    if not hits and data.get("unresponsive_engines"):
+        raise RuntimeError(f"no results; unresponsive engines: {data['unresponsive_engines']}")
+    return hits[:MAX_SEARXNG_RESULTS]
+
+
 # engine name -> (callable, requires_env_key)
 ENGINES: dict[str, tuple] = {
+    "searxng": (_searxng, "SEARXNG_URL"),
     "duckduckgo": (_duckduckgo, None),
     # "bing": (_bing, "BING_API_KEY"),
     # "brave": (_brave, "BRAVE_API_KEY"),
@@ -128,8 +154,23 @@ ENGINES: dict[str, tuple] = {
 
 
 async def dork_search(query: str, engines: list[str] | None = None) -> ConnectorResult:
-    """Run ``query`` across the available engines and merge the hits."""
-    wanted = engines or list(ENGINES)
+    """Run ``query`` across the available engines and merge the hits.
+
+    Default: SearXNG when configured (it already aggregates many engines),
+    falling back to DuckDuckGo only if SearXNG fails; otherwise DuckDuckGo.
+    """
+    if engines:
+        wanted = engines
+    elif os.environ.get("SEARXNG_URL"):
+        result = await dork_search(query, ["searxng"])
+        if result.raw["errors"] or not result.entities:
+            fallback = await dork_search(query, ["duckduckgo"])
+            fallback.raw["errors"] = {**result.raw["errors"], **fallback.raw["errors"]}
+            if fallback.entities or not result.entities:
+                return fallback
+        return result
+    else:
+        wanted = [e for e in ENGINES if e != "searxng"]
     tasks = []
     used: list[str] = []
     skipped: dict[str, str] = {}

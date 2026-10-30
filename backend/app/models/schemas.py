@@ -17,6 +17,9 @@ class InvestigationSettings(BaseModel):
     max_depth: int = Field(1, ge=0, le=3)
     connectors: list[str] = ["*"]
     exclude_connectors: list[str] = []
+    # Quick scan cost tiers: "none" (free only), "metered" (+ monthly-quota
+    # sources like Hunter/Tomba), "all" (+ paid ones like DeHashed).
+    costly_connectors: Literal["none", "metered", "all"] = "none"
 
 
 class InvestigationCreate(BaseModel):
@@ -106,6 +109,9 @@ class CollectRequest(BaseModel):
     target: str | None = Field(None, max_length=500,
                                description="added as a target first if it isn't one")
     max_tool_calls: int = Field(40, ge=1, le=150)
+    # The agent picks sources by need, so metered ones are fine by default;
+    # paid ones (DeHashed) only when asked.
+    costly_connectors: Literal["none", "metered", "all"] = "metered"
 
 
 class ReportAgentRequest(BaseModel):

@@ -13,17 +13,23 @@ from typing import Awaitable, Callable
 
 from .base import ConnectorResult, EntityType
 from .crtsh import crtsh_subdomains
+from .dehashed import dehashed
 from .dns_lookup import dns_lookup
 from .dork_search import dork_search
+from .email_finder import hunter, tomba
 from .europol import europol_wanted
 from .github_user import github_user
 from .gravatar import gravatar
 from .http_probe import http_probe
 from .interpol import interpol_notices
 from .national_wanted import national_wanted
+from .otx import otx_passive_dns
 from .rdap import rdap_domain
+from .recon_tools import dnstwist, holehe, maigret, subfinder
 from .sanctions import sanctions
 from .screenshot import screenshot
+from .urlscan import urlscan
+from .web_read import web_read
 
 Connector = Callable[..., Awaitable[ConnectorResult]]
 
@@ -36,6 +42,15 @@ class ConnectorSpec:
     passive: bool
     description: str
     requires_key: str | None = None  # env var name, or None
+    # "free" | "metered" (free quota that runs out) | "paid" (spends credits).
+    # The quick scan only runs free connectors unless the investigation opts in.
+    cost: str = "free"
+    # Calls allowed per ``quota_days`` across all investigations (ledger-enforced).
+    quota: int | None = None
+    quota_days: int = 30
+    timeout: int = 90  # seconds
+    # Only run on the investigation's own targets, never on discovered entities.
+    seed_only: bool = False
 
 
 REGISTRY: dict[str, ConnectorSpec] = {
@@ -71,7 +86,45 @@ REGISTRY: dict[str, ConnectorSpec] = {
         # Fetches the URL's host. The app refuses the target's own hosts unless
         # the investigation is active and in scope (app/evidence.py).
         ConnectorSpec("screenshot", screenshot, EntityType.URL, True,
-                      "Render a URL in headless Chromium as banner-stamped PNG evidence."),
+                      "Render a URL in headless Chromium as banner-stamped PNG evidence.",
+                      timeout=60),
+        # Like screenshot, fetches the URL's host; same target-host rule.
+        ConnectorSpec("web_read", web_read, EntityType.URL, True,
+                      "Read a web page (Firecrawl / Lightpanda / HTTP): clean text, contacts, "
+                      "social links, structured data.", timeout=60),
+        ConnectorSpec("subfinder", subfinder, EntityType.DOMAIN, True,
+                      "Subdomains from ~40 passive sources at once (CT logs, passive DNS, "
+                      "search APIs), using the configured API keys.", timeout=180),
+        ConnectorSpec("urlscan", urlscan, EntityType.DOMAIN, True,
+                      "What public urlscan.io scans of the domain saw: pages, IPs, ASNs, "
+                      "servers over time.", requires_key="URLSCAN_API_KEY"),
+        ConnectorSpec("otx_domain", otx_passive_dns, EntityType.DOMAIN, True,
+                      "AlienVault OTX passive DNS: past IPs and hostnames of the domain.",
+                      requires_key="OTX_API_KEY", timeout=100),
+        ConnectorSpec("otx_ip", otx_passive_dns, EntityType.IP, True,
+                      "AlienVault OTX passive DNS: domains that have pointed at this IP.",
+                      requires_key="OTX_API_KEY", timeout=100),
+        ConnectorSpec("dnstwist", dnstwist, EntityType.DOMAIN, True,
+                      "Registered look-alike domains (typosquats); look-alikes with MX "
+                      "records are a phishing risk.", timeout=250, seed_only=True),
+        ConnectorSpec("hunter", hunter, EntityType.DOMAIN, True,
+                      "Hunter.io: email addresses published for a company domain, with "
+                      "names, roles and the address pattern.", requires_key="HUNTER_API_KEY",
+                      cost="metered", quota=50, quota_days=30, seed_only=True),
+        ConnectorSpec("tomba", tomba, EntityType.DOMAIN, True,
+                      "Tomba.io: email addresses published for a company domain.",
+                      requires_key="TOMBA_API_KEY", cost="metered", quota=25, quota_days=30,
+                      seed_only=True),
+        ConnectorSpec("dehashed", dehashed, EntityType.EMAIL, True,
+                      "DeHashed: which breaches an email (or username / domain) appears in "
+                      "and which data classes leaked. Never returns passwords.",
+                      requires_key="DEHASHED_API_KEY", cost="paid", seed_only=True),
+        ConnectorSpec("holehe", holehe, EntityType.EMAIL, True,
+                      "Which online services an email address is registered on (checks "
+                      "those services, not the mailbox).", timeout=160, seed_only=True),
+        ConnectorSpec("maigret", maigret, EntityType.USERNAME, True,
+                      "Where a username exists across the top ~300 sites.", timeout=320,
+                      seed_only=True),
     ]
 }
 
@@ -102,4 +155,14 @@ __all__ = [
     "sanctions",
     "national_wanted",
     "screenshot",
+    "web_read",
+    "subfinder",
+    "urlscan",
+    "otx_passive_dns",
+    "dnstwist",
+    "hunter",
+    "tomba",
+    "dehashed",
+    "holehe",
+    "maigret",
 ]

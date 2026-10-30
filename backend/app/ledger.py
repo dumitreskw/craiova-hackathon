@@ -18,6 +18,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import connectors
@@ -59,6 +60,7 @@ class Ledger:
 
         try:
             guard.check(investigation, connector, spec.passive, arg)
+            self._check_quota(spec)
         except guard.GateError as e:
             self.db.audit(user=user, action="connector.call", outcome="refused",
                           investigation_id=inv_id, connector=connector, target=arg,
@@ -73,7 +75,8 @@ class Ledger:
         result: ConnectorResult | None = None
         error: str | None = None
         try:
-            result = await asyncio.wait_for(spec.fn(arg, **(kwargs or {})), CALL_TIMEOUT_S)
+            result = await asyncio.wait_for(spec.fn(arg, **(kwargs or {})),
+                                            spec.timeout or CALL_TIMEOUT_S)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # connector broke: record it, keep the run going
@@ -121,3 +124,18 @@ class Ledger:
             "connector": connector, "finding_id": finding_id, "found": len(result.entities),
             "new_entities": len(fold.new_entities), "note": result.note})
         return RunOutcome(finding_id, fold, result=result)
+
+    def quota_used(self, connector: str, days: int) -> int:
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+        return self.db.one("SELECT count(*) AS n FROM findings WHERE connector = ? "
+                           "AND fetched_at >= ?", (connector, since))["n"]
+
+    def _check_quota(self, spec) -> None:
+        """Metered sources (Hunter, Tomba...) have a hard monthly allowance; stop
+        before the provider starts failing or billing."""
+        if spec.quota is None:
+            return
+        used = self.quota_used(spec.name, spec.quota_days)
+        if used >= spec.quota:
+            raise guard.GateError(
+                f"'{spec.name}' quota used up ({used}/{spec.quota} in {spec.quota_days} days)")

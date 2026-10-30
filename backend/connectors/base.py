@@ -62,6 +62,16 @@ SOURCE_RELIABILITY: dict[str, float] = {
     "sanctions": 0.9,
     "national_wanted": 0.9,
     "screenshot": 0.95,
+    "web_read": 0.85,
+    "subfinder": 0.8,
+    "urlscan": 0.85,
+    "otx": 0.8,
+    "dnstwist": 0.9,
+    "hunter": 0.75,
+    "tomba": 0.7,
+    "dehashed": 0.8,
+    "holehe": 0.7,
+    "maigret": 0.6,
 }
 
 

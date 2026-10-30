@@ -31,17 +31,21 @@ from ..resolver import entity_view
 # The pivot map from docs/04-sources.md. Names that have no connector yet are
 # ignored, so this lights up as connectors land.
 PIVOTS: dict[EntityType, list[str]] = {
-    EntityType.DOMAIN: ["dns", "rdap", "crtsh", "passive_dns", "wayback", "urlscan",
-                        "virustotal", "subfinder", "http_probe"],
-    EntityType.IP: ["ipinfo", "shodan", "passive_dns", "virustotal"],
+    EntityType.DOMAIN: ["dns", "rdap", "crtsh", "subfinder", "urlscan", "otx_domain",
+                        "wayback", "virustotal", "dnstwist", "hunter", "tomba", "http_probe"],
+    EntityType.IP: ["otx_ip", "ipinfo", "shodan", "virustotal"],
     EntityType.ORGANIZATION: ["anaf", "vies", "opencorporates", "gleif", "sanctions",
                               "seap", "news", "dork_search"],
     EntityType.PERSON: ["sanctions", "interpol", "europol", "national_wanted",
                         "court_records", "news", "dork_search"],
-    EntityType.EMAIL: ["hibp", "gravatar", "email_rep", "github_email", "dork_search"],
-    EntityType.USERNAME: ["username_enum", "github_user"],
+    EntityType.EMAIL: ["gravatar", "holehe", "dehashed", "hibp", "email_rep", "dork_search"],
+    EntityType.USERNAME: ["github_user", "maigret"],
     EntityType.PHONE: ["phone_lookup", "hibp"],
 }
+
+# Which cost tiers a run may use: investigation setting "costly_connectors".
+COST_TIERS = {"none": {"free"}, "metered": {"free", "metered"},
+              "all": {"free", "metered", "paid"}}
 
 # Which pivots may also run on entities the scan discovered (depth > 0).
 PIVOT_ON_DISCOVERED = {EntityType.DOMAIN, EntityType.IP, EntityType.ORGANIZATION,
@@ -56,12 +60,14 @@ MIN_PIVOT_CONFIDENCE = 0.5
 CONCURRENCY = 8
 
 
-def connectors_for(entity: dict, investigation: dict) -> list[str]:
+def connectors_for(entity: dict, investigation: dict, depth: int = 0) -> list[str]:
     """Connectors that may run on this entity under this investigation's rules."""
+    tiers = COST_TIERS.get((investigation.get("settings") or {}).get("costly_connectors"),
+                           COST_TIERS["none"])
     out = []
     for name in PIVOTS.get(EntityType(entity["type"]), []):
         spec = connectors.REGISTRY.get(name)
-        if spec is None:
+        if spec is None or spec.cost not in tiers or (spec.seed_only and depth > 0):
             continue
         try:
             guard.check(investigation, name, spec.passive, entity["key"])
@@ -173,7 +179,7 @@ class QuickScan:
                         if pivots_per_type[ent["type"]] > self.settings.max_pivots_per_type:
                             stats["pivots_capped"] += 1
                             continue
-                    for name in connectors_for(ent, investigation):
+                    for name in connectors_for(ent, investigation, depth):
                         if only and name not in only:
                             continue
                         mark = (name, ent["type"], ent["key"])

@@ -139,6 +139,8 @@ PYTHONPATH=. uv run python scripts/smoke.py github.com   # live
 | `sanctions_screen` | `sanctions` | name | yes | `OPENSANCTIONS_API_KEY` |
 | `national_wanted_lists` | `national_wanted` | person name | yes | — |
 | — (app only) | `screenshot` | URL | fetches the URL's host | Playwright + Chromium |
+| — (app only) | `web_read` | URL | fetches the URL's host | Firecrawl / Lightpanda / HTTP |
+| — (app only) | `subfinder`, `urlscan`, `otx_domain`, `otx_ip`, `dnstwist`, `hunter`, `tomba`, `dehashed`, `holehe`, `maigret` | see docs/04 | yes | see `.env.example` |
 
 `http_probe_site` is only registered when `MCP_ALLOW_ACTIVE=1`: the MCP server
 has no investigation scope to check, so the deployed `/mcp` endpoint is

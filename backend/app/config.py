@@ -35,7 +35,27 @@ class Settings:
         return self.data_dir / "evidence"
 
 
+def load_env_files() -> None:
+    """Load ``KEY=value`` lines from the repo-root ``.env`` for local runs.
+
+    Docker compose passes the same file as the environment; here it is only
+    a convenience for ``uvicorn`` on a laptop. Real environment variables win.
+    """
+    for path in (BACKEND_DIR / ".env", BACKEND_DIR.parent / ".env"):
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key, value = key.strip(), value.strip().strip('"').strip("'")
+            if key and value and key not in os.environ:
+                os.environ[key] = value.replace("$$", "$")
+
+
 def load_settings() -> Settings:
+    load_env_files()
     return Settings(
         data_dir=Path(os.environ.get("OSINT_DATA_DIR", BACKEND_DIR / "data")),
         retention_days=int(os.environ.get("OSINT_RETENTION_DAYS", "90")),
