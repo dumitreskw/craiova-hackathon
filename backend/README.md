@@ -1,13 +1,25 @@
-# OSINT backend — MCP server
+# OSINT backend — app + MCP server
 
-The OSINT MCP server and its connectors. See [`../docs`](../docs) for the
-design; this is the implementation of the *OSINT MCP server* box in
+The FastAPI app (investigations, quick scan, graph, reports) and the OSINT MCP
+server with its connectors. See [`../docs`](../docs) for the design; this
+implements the *FastAPI app* and *OSINT MCP server* boxes in
 [architecture](../docs/02-architecture.md).
 
 ## Layout
 
 ```text
 backend/
+├── app/                 # FastAPI app (docs/07-mvp-plan.md layout)
+│   ├── main.py          # app factory; `uvicorn app.main:app`
+│   ├── api/             # REST routers + SSE stream (/api/v1)
+│   ├── models/          # SQLite schema, request schemas
+│   ├── ledger.py        # gate → connector → finding + raw file + audit → resolver
+│   ├── guard.py         # per-investigation scope gate for active connectors
+│   ├── resolver/        # dedupe, provenance, confidence, legal-hit candidates
+│   ├── scan/            # quick scan: pivot map, loop detection, caps, off-target rule
+│   ├── report/          # claim model, lint, internal/client render, graph draft
+│   ├── retention.py     # expiry + purge (audit kept)
+│   └── detect.py        # seed type auto-detection
 ├── connectors/          # one module per source; shared by the server and the app
 │   ├── base.py          # the ConnectorResult / EntityCandidate contract
 │   ├── _http.py         # shared async HTTP client + retry helper
@@ -33,6 +45,7 @@ cp .env.example .env         # optional: add API keys
 ## Run
 
 ```bash
+uv run uvicorn app.main:app --reload     # API on 127.0.0.1:8000, docs at /docs
 uv run python mcp_server.py              # streamable HTTP on 127.0.0.1:8787/mcp
 uv run mcp dev mcp_server.py             # MCP Inspector UI
 ```
@@ -43,6 +56,40 @@ Verify it end to end (server must be running on the matching port):
 MCP_PORT=8799 uv run python mcp_server.py &        # terminal 1
 MCP_PORT=8799 PYTHONPATH=. uv run python scripts/mcp_client_check.py   # terminal 2
 ```
+
+App data (SQLite + evidence files) goes to `backend/data/` (git-ignored);
+override with `OSINT_DATA_DIR`. Other knobs: `OSINT_RETENTION_DAYS` (90),
+`OSINT_MAX_CALLS_PER_SCAN` (60), `OSINT_MAX_PIVOTS_PER_TYPE` (10).
+
+Try it:
+
+```bash
+B=http://127.0.0.1:8000/api/v1
+INV=$(curl -s -X POST $B/investigations -H 'content-type: application/json'   -d '{"name":"Demo","purpose":"Authorized external footprint review","legal_basis":"legitimate_interest"}'   | jq -r .id)
+curl -s -X POST $B/investigations/$INV/targets -H 'content-type: application/json' -d '{"value":"example.com"}'
+curl -N $B/investigations/$INV/stream                     # live events (Ctrl-C to stop)
+curl -s "$B/investigations/$INV/graph?min_confidence=0.5" | jq '.nodes | length'
+RID=$(curl -s -X POST $B/investigations/$INV/reports -H 'content-type: application/json' -d '{}' | jq -r .id)
+curl -s "$B/reports/$RID/render?audience=client"          # Markdown; &format=html for HTML
+```
+
+## How the app keeps collection honest
+
+- **Every call goes through the ledger** (`app/ledger.py`): finding row, raw
+  JSON file with sha256, audit row, live events — including refused calls.
+- **Active connectors** (`passive=False`) run only when the investigation is
+  `active`, has a recorded authorization, and the host is in *its own* scope.
+  The quick scan doesn't even offer them otherwise.
+- **Off-target pivots**: discovered domains/emails outside the target's own
+  domains (NS, MX, SOA hostmaster…) are recorded but not followed, and the
+  report lists them as related third-party assets.
+- **People are only screened as seeds**: the scan never runs search or legal
+  checks on a person it discovered; an explicit, audited pivot can.
+- **Legal hits are candidates**: never merged into the subject; linked by a
+  `possible_match` edge until an analyst confirms with a disambiguator.
+- **Reports are claims with evidence ids**; lint blocks uncited claims, legal
+  hits stated as fact and credential-looking text; `client` render hides
+  workspace detail. See [docs/08](../docs/08-field-lessons.md).
 
 ## Test
 

@@ -54,6 +54,8 @@ def legal_hit(
     subject_attrs = {
         **attributes,
         "unverified": True,
+        # Lets the resolver keep two same-name hits apart (one per listing).
+        "listing_url": source_url,
         "disambiguators": {k: v for k, v in disambiguators.items() if v},
     }
     subject = EntityCandidate(subject_type, key, subject_attrs,
