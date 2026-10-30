@@ -78,7 +78,7 @@ CONCURRENCY = 8
 def connectors_for(entity: dict, investigation: dict, depth: int = 0) -> list[str]:
     """Connectors that may run on this entity under this investigation's rules."""
     tiers = COST_TIERS.get((investigation.get("settings") or {}).get("costly_connectors"),
-                           COST_TIERS["none"])
+                           COST_TIERS["all"])
     out = []
     for name in PIVOTS.get(EntityType(entity["type"]), []):
         spec = connectors.REGISTRY.get(name)

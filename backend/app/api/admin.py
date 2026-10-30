@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query
 import connectors
 from connectors import _cli
 
+from .. import credits as credit_check
 from ..platform import Platform
 from ..retention import purge_expired
 from .deps import current_user, get_platform
@@ -42,6 +43,12 @@ async def list_connectors(p: Platform = Depends(get_platform)):
             "quota_used": p.ledger.quota_used(s.name, s.quota_days) if s.quota else None,
         })
     return out
+
+
+@router.get("/credits")
+async def credits(refresh: bool = False, p: Platform = Depends(get_platform)):
+    """Live credit / quota balance per paid or metered source (cached 5 min)."""
+    return await credit_check.credits(p.db, refresh=refresh)
 
 
 @router.get("/audit")

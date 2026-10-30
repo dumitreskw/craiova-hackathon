@@ -19,7 +19,7 @@ class InvestigationSettings(BaseModel):
     exclude_connectors: list[str] = []
     # Quick scan cost tiers: "none" (free only), "metered" (+ monthly-quota
     # sources like Hunter/Tomba), "all" (+ paid ones like DeHashed).
-    costly_connectors: Literal["none", "metered", "all"] = "none"
+    costly_connectors: Literal["none", "metered", "all"] = "all"
 
 
 class InvestigationCreate(BaseModel):
@@ -109,9 +109,9 @@ class CollectRequest(BaseModel):
     target: str | None = Field(None, max_length=500,
                                description="added as a target first if it isn't one")
     max_tool_calls: int = Field(40, ge=1, le=150)
-    # The agent picks sources by need, so metered ones are fine by default;
-    # paid ones (DeHashed) only when asked.
-    costly_connectors: Literal["none", "metered", "all"] = "metered"
+    # Default: every source, including monthly-quota (Hunter, Tomba) and paid
+    # (DeHashed) ones; the ledger still enforces quotas and seed-only rules.
+    costly_connectors: Literal["none", "metered", "all"] = "all"
 
 
 class ReportAgentRequest(BaseModel):
@@ -130,4 +130,4 @@ class DeepRequest(BaseModel):
     target: str | None = Field(None, max_length=500)
     max_tool_calls: int = Field(60, ge=6, le=250,
                                 description="lookups shared by all workers")
-    costly_connectors: Literal["none", "metered", "all"] = "metered"
+    costly_connectors: Literal["none", "metered", "all"] = "all"

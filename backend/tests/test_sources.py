@@ -287,10 +287,12 @@ def test_scan_cost_tiers_and_seed_only(fake_registry, monkeypatch):
                                             cost="metered", quota=50, seed_only=True)
     ent = {"type": "Domain", "key": "example.com"}
     inv = {"mode": "passive", "settings": {}}
-    assert "hunter" not in connectors_for(ent, inv)
+    assert "hunter" in connectors_for(ent, inv)              # default: every tier
+    inv["settings"] = {"costly_connectors": "none"}
+    assert "hunter" not in connectors_for(ent, inv)          # free sources only
     inv["settings"] = {"costly_connectors": "metered"}
     assert "hunter" in connectors_for(ent, inv, depth=0)
-    assert "hunter" not in connectors_for(ent, inv, depth=1)
+    assert "hunter" not in connectors_for(ent, inv, depth=1)  # seed-only
 
 
 def test_registry_declares_costs():

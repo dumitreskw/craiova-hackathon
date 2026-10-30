@@ -189,7 +189,7 @@ def orchestrator_tools() -> list[dict]:
     return [DISPATCH_WORKER, GRAPH_OVERVIEW]
 
 
-def connector_tools(investigation: dict, costly: str = "metered") -> list[dict]:
+def connector_tools(investigation: dict, costly: str = "all") -> list[dict]:
     tiers = COST_TIERS.get(costly, COST_TIERS["none"])
     tools = []
     for name in sorted(connectors.REGISTRY):
@@ -261,7 +261,7 @@ class ToolBox:
     run_id: str
     user: str
     budget: int
-    costly: str = "metered"
+    costly: str = "all"
     runner: Any = None  # the AgentRunner, for dispatch_worker
     calls: int = 0
     report_id: str | None = None

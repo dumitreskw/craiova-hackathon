@@ -65,7 +65,7 @@ class AgentRunner:
         return run_id
 
     def start(self, investigation: dict, kind: str, goal: str, user: str,
-              max_tool_calls: int, costly: str = "metered") -> str:
+              max_tool_calls: int, costly: str = "all") -> str:
         run_id = self.new_run(investigation, kind, goal, user, max_tool_calls)
         task = asyncio.create_task(self.run(run_id, investigation, kind, goal, user,
                                             max_tool_calls, costly))
@@ -83,7 +83,7 @@ class AgentRunner:
     # --- the loop -----------------------------------------------------------------
 
     async def run(self, run_id: str, investigation: dict, kind: str, goal: str, user: str,
-                  max_tool_calls: int, costly: str = "metered", worker: str | None = None,
+                  max_tool_calls: int, costly: str = "all", worker: str | None = None,
                   parent: str | None = None) -> dict:
         inv_id = investigation["id"]
         box = ToolBox(self.ledger, investigation, run_id, user, budget=max_tool_calls,
