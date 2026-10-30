@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Map-room palette: ink-blue ground, survey-yellow highlighter for actions and
+   confirmed facts, red reserved for "unverified" and failures. */
+:root {
+  --ground: 23 30 43;
+  --panel: 29 38 54;
+  --raised: 37 48 67;
+  --line: 52 66 90;
+  --ink: 228 233 241;
+  --muted: 146 160 184;
+  --accent: 242 201 76;
+  --accent-ink: 33 27 8;
+  --danger: 229 72 77;
+  --ok: 94 196 140;
+  --warn: 240 160 70;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --ground: 236 240 246;
+    --panel: 255 255 255;
+    --raised: 226 232 241;
+    --line: 196 205 220;
+    --ink: 22 30 44;
+    --muted: 82 96 120;
+    --accent: 224 177 43;
+    --accent-ink: 33 27 8;
+    --danger: 196 38 48;
+    --ok: 28 135 78;
+    --warn: 184 104 16;
+    color-scheme: light;
+  }
+}
+
+:root[data-theme="light"] {
+  --ground: 236 240 246;
+  --panel: 255 255 255;
+  --raised: 226 232 241;
+  --line: 196 205 220;
+  --ink: 22 30 44;
+  --muted: 82 96 120;
+  --accent: 224 177 43;
+  --accent-ink: 33 27 8;
+  --danger: 196 38 48;
+  --ok: 28 135 78;
+  --warn: 184 104 16;
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-ground text-ink font-sans antialiased;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: 2px;
+}
+
+@layer components {
+  .field {
+    @apply w-full rounded-md border border-line bg-ground px-2.5 py-1.5 text-sm text-ink placeholder:text-muted/70
+      focus:border-accent focus:outline-none;
+  }
+  .btn {
+    @apply inline-flex items-center gap-1.5 rounded-md border border-line bg-raised px-3 py-1.5 text-sm font-medium text-ink
+      hover:border-muted disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply border-accent bg-accent text-accent-ink hover:brightness-105 hover:border-accent;
+  }
+  .btn-danger {
+    @apply border-danger/60 bg-transparent text-danger hover:bg-danger/10 hover:border-danger;
+  }
+  .btn-quiet {
+    @apply border-transparent bg-transparent text-muted hover:text-ink hover:border-line;
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium text-muted;
+  }
+  .panel {
+    @apply rounded-lg border border-line bg-panel;
+  }
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line)) transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
