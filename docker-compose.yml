@@ -1,0 +1,87 @@
+# OSINT platform on one host: Caddy (TLS + basic auth) -> app (API + UI) and
+# the MCP server. Optional: a VPN egress container (profile "egress").
+#
+#   cp .env.example .env    # fill it in
+#   docker compose up -d --build
+#   docker compose --profile egress up -d --build   # with the VPN exit
+#
+# See docs/09-deployment.md.
+
+services:
+  caddy:
+    image: caddy:2.8.4
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      OSINT_DOMAIN: ${OSINT_DOMAIN:-localhost}
+      OSINT_BASIC_AUTH_USER: ${OSINT_BASIC_AUTH_USER:?set OSINT_BASIC_AUTH_USER in .env}
+      OSINT_BASIC_AUTH_HASH: ${OSINT_BASIC_AUTH_HASH:?set OSINT_BASIC_AUTH_HASH in .env (caddy hash-password)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+
+  app:
+    build: .
+    image: osint-platform:latest
+    restart: unless-stopped
+    expose:
+      - "8000"
+    env_file: .env
+    environment:
+      OSINT_DATA_DIR: /data
+    volumes:
+      - osint_data:/data
+    # Chromium needs more than the default 64 MB of shared memory.
+    shm_size: "512m"
+
+  mcp:
+    build: .
+    image: osint-platform:latest
+    restart: unless-stopped
+    command: ["python", "mcp_server.py"]
+    expose:
+      - "8787"
+    env_file: .env
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8787"
+      # Never expose the active tool on the public endpoint (no scope to check).
+      MCP_ALLOW_ACTIVE: "0"
+    depends_on:
+      - app
+    healthcheck:
+      disable: true
+
+  # Optional: send collection traffic out through a VPN exit in the target's
+  # country (Mullvad over WireGuard here; gluetun supports most providers).
+  # Set OSINT_HTTP_PROXY=http://egress:8888 and OSINT_EGRESS_LABEL in .env.
+  egress:
+    image: qmcgaw/gluetun:v3.39.1
+    profiles: ["egress"]
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    expose:
+      - "8888"
+    environment:
+      VPN_SERVICE_PROVIDER: ${EGRESS_VPN_PROVIDER:-mullvad}
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${EGRESS_WIREGUARD_PRIVATE_KEY:-}
+      WIREGUARD_ADDRESSES: ${EGRESS_WIREGUARD_ADDRESSES:-}
+      SERVER_COUNTRIES: ${EGRESS_COUNTRY:-Romania}
+      HTTPPROXY: "on"
+      HTTPPROXY_LISTENING_ADDRESS: ":8888"
+
+volumes:
+  osint_data:
+  caddy_data:
+  caddy_config:

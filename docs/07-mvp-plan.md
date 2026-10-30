@@ -16,18 +16,18 @@
 - [ ] Connectors: `dns`, `rdap`, `crtsh`, `http_probe` (emails/socials
       extraction), `anaf` (CUI → company), `gravatar`, `hibp`, `github`,
       `username_enum` (top 50 sites), `dork_search` (multi-engine)
-- [ ] OSINT MCP server exposing the connectors as tools
+- [x] OSINT MCP server exposing the connectors as tools
 - [x] Quick scan: parallel connectors + one pivot round, loop detection
-- [ ] Collection agent: Claude loop over the MCP tools, streamed to the UI
-- [ ] Report agent: reasons over the graph, dedupes/curates, writes the report
-- [ ] `screenshot` tool (Playwright) + evidence capture in the report
+- [x] Collection agent: Claude loop over the connector tools, streamed to the UI
+- [x] Report agent: reasons over the graph, dedupes/curates, writes the report
+- [x] `screenshot` tool (Playwright) + evidence capture in the report
 - [x] Deterministic de-duplication
-- [ ] Graph view with live updates (SSE) — backend graph + SSE done; UI pending
-- [ ] Entity panel with sources and raw evidence — backend endpoints done; UI pending
+- [x] Graph view with live updates (SSE)
+- [x] Entity panel with sources and raw evidence
 - [x] JSON export (graph, findings, report body)
 
 **Nice to have**
-- [ ] Confidence scoring and filter slider — scoring + `min_confidence` filter done; slider pending
+- [x] Confidence scoring and filter slider
 - [ ] PDF report built from the report agent's output + screenshots
 - [ ] Timeline view
 - [ ] Shodan / urlscan / VirusTotal

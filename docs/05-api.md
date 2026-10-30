@@ -36,8 +36,10 @@ DELETE /investigations/{id}            delete (soft) + purge evidence job
 
 ```text
 POST   /investigations/{id}/targets    add seed + start a quick scan
-POST   /investigations/{id}/collect    start the collection agent (gathers)
-POST   /investigations/{id}/report     start the report agent (curate + evidence)
+POST   /investigations/{id}/collect    start the collection agent {goal, target?, max_tool_calls}
+POST   /investigations/{id}/report-agent  start the report agent {goal, max_tool_calls}
+POST   /investigations/{id}/capture    screenshot a URL as evidence now {url, entity_id?}
+GET    /findings/{fid}/screenshot      the banner-stamped PNG of a capture
 POST   /investigations/{id}/scan       re-run the quick scan {entity_ids?, connectors?, max_depth?}
 GET    /investigations/{id}/runs       scans / agent runs, newest first
 GET    /agent-runs/{rid}               transcript, summary, token usage
@@ -62,9 +64,10 @@ POST   /entities/{eid}/pivot           run selected connectors on an entity
 ```
 
 ```json
-// POST /investigations/{id}/report
-// The report agent reads the existing graph; it runs no collection tools.
-{ "goal": "Map the attack surface and who is behind it", "capture_evidence": true }
+// POST /investigations/{id}/report-agent
+// The report agent reads the existing graph and captures evidence; it runs no
+// collection tools. It submits its report through the linter until it passes.
+{ "goal": "Map the attack surface and who is behind it", "max_tool_calls": 25 }
 
 // 202 Accepted
 { "run_id": "ar_2", "kind": "report" }
@@ -113,9 +116,14 @@ event: entity.created   data: {"entity": {...}}
 event: edge.created     data: {"edge": {...}}
 event: tool.finished    data: {"connector": "crtsh", "found": 14}
 event: tool.failed      data: {"connector": "hibp", "error": "rate_limited"}
-event: agent.text       data: {"delta": "Found 3 subdomains, checking who registered..."}
-event: agent.finished   data: {"run_id": "ar_1", "summary": "..."}
+event: agent.started    data: {"run_id": "ar_1", "kind": "collection", "goal": "..."}
+event: agent.text       data: {"run_id": "ar_1", "delta": "Found 3 subdomains, checking who registered..."}
+event: agent.update     data: {"run_id": "ar_1", "delta": "<progress note between tool calls>"}
+event: agent.tool       data: {"run_id": "ar_1", "name": "crtsh", "input": {"value": "example.com"}}
+event: agent.tool_result data: {"run_id": "ar_1", "name": "crtsh", "error": false, "content": "..."}
+event: agent.finished   data: {"run_id": "ar_1", "kind": "collection", "status": "finished", "summary": "...", "report_id": null}
 event: agent.refused    data: {"run_id": "ar_1", "category": "..."}
+event: agent.failed     data: {"run_id": "ar_1", "error": "..."}
 ```
 
 ## Reports

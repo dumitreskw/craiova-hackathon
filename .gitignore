@@ -1,0 +1,4 @@
+# Secrets and local data: never commit.
+.env
+data/
+*.sqlite

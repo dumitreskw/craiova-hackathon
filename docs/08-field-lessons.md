@@ -50,14 +50,25 @@ flowchart LR
   lint -->|errors| fix(["Analyst fixes claims"])
 ```
 
+## Carried over since
+
+- **Evidence capture** (`connectors/screenshot.py`, `app/evidence.py`): a
+  banner with only the source URL and capture time (safe for both audiences),
+  bot walls reported as "capture manually" instead of a silent gap, captures
+  of the target's own hosts held to the active-mode rules, screenshots
+  embedded in exported HTML reports.
+- **Egress**: `OSINT_HTTP_PROXY` routes connectors and screenshots through a
+  chosen exit (the compose `egress` profile runs a VPN container), and
+  `OSINT_EGRESS_LABEL` is recorded on every finding. See
+  [Deployment](09-deployment.md).
+- **The report agent submits through the linter** and fixes what it flags,
+  the automated version of the claim-by-claim cross-check done by hand.
+
 ## Still to carry over
 
-- **Evidence capture** with a source banner, plus a fallback chain for bot walls
-  (headless capture, then a saved-page render, then a manual capture task). The
-  banner content should depend on the audience, like the report.
-- **Egress per investigation**: record which country/relay the collection
-  went out from, and pick it to match the target's country, so local search
-  results are what a local would see.
+- **Saved-page fallback for bot walls**: render a saved copy when the live
+  capture is blocked, labelled as such.
+- **Per-investigation egress country** (today it is one exit per deployment).
 - **Paid-credit budget** per investigation (`budget_credits` in the API draft),
   charged by the ledger.
 - **Standard workstreams** (corporate registry, adverse media / sanctions,

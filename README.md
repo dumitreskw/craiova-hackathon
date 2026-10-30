@@ -16,3 +16,23 @@ graph by pivoting recursively on everything it finds.
 6. [Legal, Ethics & Safety](docs/06-legal-ethics.md): GDPR, passive-first, guardrails
 7. [Hackathon MVP Plan](docs/07-mvp-plan.md): scope, team split, timeline, risks
 8. [Lessons from Field Casework](docs/08-field-lessons.md): what went wrong in real OSINT reports and how the platform prevents it
+9. [Deployment & Infrastructure](docs/09-deployment.md): docker compose stack, Caddy, VPN egress, MCP access, backups, CI
+
+## Run it
+
+```bash
+# whole stack (Caddy + app + UI + MCP), see docs/09-deployment.md
+cp .env.example .env        # set OSINT_DOMAIN, basic-auth user/hash, ANTHROPIC_API_KEY
+docker compose up -d --build
+
+# or for development
+cd backend && uv sync --extra evidence && uv run playwright install chromium
+uv run uvicorn app.main:app --reload            # API on :8000
+cd ../frontend && npm install && npm run dev     # UI on :5173, proxies /api
+```
+
+| Path | What |
+|---|---|
+| `backend/` | FastAPI app, connectors, Claude agents, MCP server ([README](backend/README.md)) |
+| `frontend/` | React + Cytoscape analyst UI ([README](frontend/README.md)) |
+| `Dockerfile`, `docker-compose.yml`, `Caddyfile` | Deployment |
