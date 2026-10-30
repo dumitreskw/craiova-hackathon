@@ -138,7 +138,14 @@ export interface Connector {
   description: string;
   requires_key: string | null;
   key_configured: boolean | null;
+  available?: boolean;
+  cost?: "free" | "metered" | "paid";
+  seed_only?: boolean;
+  quota?: number | null;
+  quota_used?: number | null;
 }
+
+export type CostTier = "none" | "metered" | "all";
 
 export type ClaimStatus = "verified" | "unverified" | "leaked" | "inference";
 

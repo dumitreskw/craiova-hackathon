@@ -26,6 +26,21 @@ export function EntityPanel({
   const [capturing, setCapturing] = useState(false);
   const [captureError, setCaptureError] = useState<unknown>(null);
 
+  const [reading, setReading] = useState(false);
+
+  async function readPage(url: string, id: string) {
+    setReading(true);
+    setCaptureError(null);
+    try {
+      await api.post(`/investigations/${investigationId}/read`, { url, entity_id: id });
+      reload();
+    } catch (err) {
+      setCaptureError(err);
+    } finally {
+      setReading(false);
+    }
+  }
+
   async function captureEvidence(url: string, id: string) {
     setCapturing(true);
     setCaptureError(null);
@@ -104,10 +119,16 @@ export function EntityPanel({
           <button className="btn px-2.5 py-1 text-xs" onClick={() => setAction("pivot")}>Look up further</button>
         )}
         {ent.type === "URL" && /^https?:\/\//.test(ent.key) && (
-          <button className="btn px-2.5 py-1 text-xs" disabled={capturing}
-            onClick={() => captureEvidence(ent.key, ent.id)}>
-            {capturing ? "Capturing…" : "Capture evidence"}
-          </button>
+          <>
+            <button className="btn px-2.5 py-1 text-xs" disabled={reading}
+              onClick={() => readPage(ent.key, ent.id)}>
+              {reading ? "Reading…" : "Read page"}
+            </button>
+            <button className="btn px-2.5 py-1 text-xs" disabled={capturing}
+              onClick={() => captureEvidence(ent.key, ent.id)}>
+              {capturing ? "Capturing…" : "Capture evidence"}
+            </button>
+          </>
         )}
         <button className="btn btn-quiet px-2.5 py-1 text-xs" onClick={() => setAction("note")}>Add note</button>
       </div>
@@ -256,7 +277,10 @@ function StatusForm({ entityId, kind, candidate, onDone, onCancel }: {
 function PivotForm({ entityId, connectors, onDone, onCancel }: {
   entityId: string; connectors: Connector[]; onDone: () => void; onCancel: () => void;
 }) {
-  const [chosen, setChosen] = useState<Set<string>>(() => new Set(connectors.filter((c) => c.passive).map((c) => c.name)));
+  // Pre-select only free, passive, available sources; quota and paid ones are opt-in.
+  const [chosen, setChosen] = useState<Set<string>>(() => new Set(connectors
+    .filter((c) => c.passive && (c.cost ?? "free") === "free" && c.available !== false)
+    .map((c) => c.name)));
   const [error, setError] = useState<unknown>(null);
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -282,6 +306,11 @@ function PivotForm({ entityId, connectors, onDone, onCancel }: {
           <span>
             <span className="font-medium">{c.name}</span>
             {!c.passive && <span className="ml-1.5 text-2xs text-warn">contacts the target</span>}
+            {c.cost === "metered" && (
+              <span className="ml-1.5 text-2xs text-warn">quota {c.quota_used ?? 0}/{c.quota} this month</span>
+            )}
+            {c.cost === "paid" && <span className="ml-1.5 text-2xs text-danger">paid credits</span>}
+            {c.available === false && <span className="ml-1.5 text-2xs text-muted">not configured</span>}
             {c.requires_key && c.key_configured === false && <span className="ml-1.5 text-2xs text-muted">no API key set</span>}
             <span className="block text-xs text-muted">{c.description}</span>
           </span>

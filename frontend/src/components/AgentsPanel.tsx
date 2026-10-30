@@ -58,6 +58,7 @@ export function AgentsPanel({ investigation, events }: { investigation: Investig
   const [target, setTarget] = useState(targets[0]?.value ?? "");
   const [goal, setGoal] = useState("Map the attack surface and who is behind it.");
   const [maxCalls, setMaxCalls] = useState(40);
+  const [costly, setCostly] = useState<"none" | "metered" | "all">("metered");
   const [reportGoal, setReportGoal] = useState("Summarize what matters for the stated purpose, with evidence for every claim.");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -72,6 +73,7 @@ export function AgentsPanel({ investigation, events }: { investigation: Investig
         target: target.trim() || undefined,
         goal: goal.trim(),
         max_tool_calls: maxCalls,
+        costly_connectors: costly,
       });
     } catch (err) {
       setError(explain(err));
@@ -114,6 +116,15 @@ export function AgentsPanel({ investigation, events }: { investigation: Investig
           <textarea id="agent-goal" className="field min-h-[56px]" value={goal} onChange={(e) => setGoal(e.target.value)} />
         </div>
         <div className="flex items-end gap-2">
+          <div>
+            <label className="label" htmlFor="agent-costly">Sources</label>
+            <select id="agent-costly" className="field w-auto" value={costly}
+              onChange={(e) => setCostly(e.target.value as "none" | "metered" | "all")}>
+              <option value="none">Free only</option>
+              <option value="metered">+ quota (Hunter, Tomba)</option>
+              <option value="all">+ paid (DeHashed)</option>
+            </select>
+          </div>
           <div>
             <label className="label" htmlFor="agent-max">Lookup limit</label>
             <input id="agent-max" type="number" min={1} max={200} className="field w-24" value={maxCalls}

@@ -20,6 +20,7 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
   const [scope, setScope] = useState("");
   const [authorization, setAuthorization] = useState("");
   const [maxDepth, setMaxDepth] = useState(1);
+  const [costly, setCostly] = useState<"none" | "metered" | "all">("none");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
@@ -42,7 +43,8 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
         mode,
         scope: mode === "active" ? scopeList : [],
         authorization: mode === "active" ? authorization.trim() : null,
-        settings: { max_depth: maxDepth, connectors: ["*"], exclude_connectors: [] },
+        settings: { max_depth: maxDepth, connectors: ["*"], exclude_connectors: [],
+                    costly_connectors: costly },
       });
       onCreated(inv);
     } catch (err) {
@@ -140,6 +142,17 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
             <option value={2}>2: one more step out</option>
             <option value={3}>3: widest (slow, noisy)</option>
           </select>
+        </div>
+
+        <div>
+          <label className="label" htmlFor="costly">Sources with quotas or fees in automatic scans</label>
+          <select id="costly" className="field w-auto" value={costly}
+            onChange={(e) => setCostly(e.target.value as "none" | "metered" | "all")}>
+            <option value="none">Free sources only</option>
+            <option value="metered">Also monthly-quota sources (Hunter, Tomba)</option>
+            <option value="all">Also paid sources (DeHashed)</option>
+          </select>
+          <p className="mt-1 text-xs text-muted">Quotas are shared by everyone on this server and enforced per month.</p>
         </div>
 
         <ErrorBox error={error} onDismiss={() => setError(null)} />
