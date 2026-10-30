@@ -60,6 +60,19 @@ LOGIN_WAIT_S = 15 * 60
 
 PERSONA_DIR = Path(os.environ.get("OSINT_PERSONA_DIR", Path.home() / "personas"))
 
+# Which Chromium to drive. Empty (default) = the browser `playwright install
+# chromium` downloaded into this venv — self-contained, no system packages.
+# Set e.g. OSINT_CHROMIUM_CHANNEL=chromium to use a system/stable Chromium.
+CHROMIUM_CHANNEL = os.environ.get("OSINT_CHROMIUM_CHANNEL") or None
+
+
+def _launch_kwargs(headless: bool) -> dict:
+    kw: dict = {"headless": headless, "args": ["--no-sandbox",
+                                               "--disable-blink-features=AutomationControlled"]}
+    if CHROMIUM_CHANNEL:
+        kw["channel"] = CHROMIUM_CHANNEL
+    return kw
+
 # Phrases that mean "you must log in to see this" rather than real content.
 LOGIN_WALL = ("log in to continue", "sign in to continue", "log in to see",
               "join linkedin", "sign up to see", "see photos and videos",
@@ -243,12 +256,10 @@ def capture(job: dict) -> dict:
         def open_ctx(use_persona: bool):
             if use_persona and persona:
                 ctx = pw.chromium.launch_persistent_context(
-                    str(persona_profile(persona)), channel="chromium", headless=True,
-                    viewport=VIEWPORT, locale="en-US",
-                    args=["--no-sandbox", "--disable-blink-features=AutomationControlled"])
+                    str(persona_profile(persona)), viewport=VIEWPORT, locale="en-US",
+                    **_launch_kwargs(True))
                 return ctx, ctx.pages[0] if ctx.pages else ctx.new_page()
-            browser = pw.chromium.launch(channel="chromium", headless=True,
-                                         args=["--no-sandbox"])
+            browser = pw.chromium.launch(**_launch_kwargs(True))
             ctx = browser.new_context(viewport=VIEWPORT, locale="en-US")
             return ctx, ctx.new_page()
 
@@ -333,9 +344,8 @@ def login(job: dict) -> dict:
     url = _HOME.get((job.get("persona") or {}).get("platform"), "https://example.com")
     with sync_playwright() as pw:
         ctx = pw.chromium.launch_persistent_context(
-            str(persona_profile(persona)), channel="chromium", headless=False,
-            viewport=VIEWPORT, locale="en-US",
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"])
+            str(persona_profile(persona)), viewport=VIEWPORT, locale="en-US",
+            **_launch_kwargs(False))
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=CAPTURE_NAV_MS)
@@ -368,8 +378,7 @@ def check(job: dict) -> dict:
         return {"ok": False, "session": "logged_out"}
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
-        ctx = pw.chromium.launch_persistent_context(str(profile), channel="chromium",
-                                                    headless=True, args=["--no-sandbox"])
+        ctx = pw.chromium.launch_persistent_context(str(profile), **_launch_kwargs(True))
         try:
             signed = any(c["name"].lower() in _SESSION_COOKIES for c in ctx.cookies())
         finally:

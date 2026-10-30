@@ -15,12 +15,14 @@ and every capture needs the Mullvad VPN up (in the persona's region).
 ## Install (on Kali)
 
 ```bash
+sudo apt-get update && sudo apt-get install -y nodejs   # Playwright's driver needs Node
 mkdir -p ~/osint-worker && cd ~/osint-worker
 cp /path/to/repo/kali-worker/worker.py .
 python3 -m venv .venv && . .venv/bin/activate
-pip install playwright requests        # Playwright is already on this Kali
-#   the worker drives the system /usr/bin/chromium (channel="chromium"),
-#   so `playwright install` is not required.
+pip install playwright requests
+playwright install chromium            # self-contained browser for this venv
+#   To use a system Chromium instead, skip the download and set
+#   OSINT_CHROMIUM_CHANNEL=chromium in the env file.
 
 cp /path/to/repo/kali-worker/osint-worker.env.example osint-worker.env
 # edit osint-worker.env: OSINT_PLATFORM_URL, OSINT_WORKER_TOKEN, OSINT_BASIC_AUTH
