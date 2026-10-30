@@ -12,22 +12,22 @@
 
 **Must have**
 - [ ] Single investigation workspace, no multi-tenant auth (simple login is enough)
-- [ ] Input auto-detection: domain, email, username, company CUI
+- [x] Input auto-detection: domain, email, username, company CUI (+ IP, phone, person name)
 - [ ] Connectors: `dns`, `rdap`, `crtsh`, `http_probe` (emails/socials
       extraction), `anaf` (CUI → company), `gravatar`, `hibp`, `github`,
       `username_enum` (top 50 sites), `dork_search` (multi-engine)
 - [ ] OSINT MCP server exposing the connectors as tools
-- [ ] Quick scan: parallel connectors + one pivot round, loop detection
+- [x] Quick scan: parallel connectors + one pivot round, loop detection
 - [ ] Collection agent: Claude loop over the MCP tools, streamed to the UI
 - [ ] Report agent: reasons over the graph, dedupes/curates, writes the report
 - [ ] `screenshot` tool (Playwright) + evidence capture in the report
-- [ ] Deterministic de-duplication
-- [ ] Graph view with live updates (SSE)
-- [ ] Entity panel with sources and raw evidence
-- [ ] JSON export
+- [x] Deterministic de-duplication
+- [ ] Graph view with live updates (SSE) — backend graph + SSE done; UI pending
+- [ ] Entity panel with sources and raw evidence — backend endpoints done; UI pending
+- [x] JSON export (graph, findings, report body)
 
 **Nice to have**
-- [ ] Confidence scoring and filter slider
+- [ ] Confidence scoring and filter slider — scoring + `min_confidence` filter done; slider pending
 - [ ] PDF report built from the report agent's output + screenshots
 - [ ] Timeline view
 - [ ] Shodan / urlscan / VirusTotal

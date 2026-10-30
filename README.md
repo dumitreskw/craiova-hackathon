@@ -15,3 +15,4 @@ graph by pivoting recursively on everything it finds.
 5. [API](docs/05-api.md): REST + SSE draft
 6. [Legal, Ethics & Safety](docs/06-legal-ethics.md): GDPR, passive-first, guardrails
 7. [Hackathon MVP Plan](docs/07-mvp-plan.md): scope, team split, timeline, risks
+8. [Lessons from Field Casework](docs/08-field-lessons.md): what went wrong in real OSINT reports and how the platform prevents it
