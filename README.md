@@ -1,4 +1,4 @@
-# Craiova Hackathon
+# Team Cybnetic @ Craiova Hackathon
 
 Scope: CyberSecurity OSINT Platform
 
