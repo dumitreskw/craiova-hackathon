@@ -13,7 +13,7 @@ practice.
 | # | Problem in casework | Platform answer | Where |
 |---|---|---|---|
 | 1 | Collection details (which tool ran, when, from which egress, how many paid credits) were kept in hand-written notes and were incomplete. | **Ledger.** Every connector call goes through one path that writes a `findings` row (input, timing, who/what ran it, sha256), stores the raw payload as a file, and appends to the audit log, including refused calls. | `app/ledger.py` |
-| 2 | The scope gate allowed any host listed in **any** engagement's scope file, so case A's authorization could cover case B. | **Per-investigation scope.** Active connectors need `mode=active`, a recorded authorization, and the host in *this* investigation's scope (host, parent domain, or CIDR). | `app/guard.py` |
+| 2 | The scope gate allowed any host listed in **any** engagement's scope file, so case A's authorization could cover case B. | **Active-mode gate.** Active connectors need `mode=active`; the quick scan doesn't offer them otherwise. | `app/guard.py` |
 | 3 | Recon drifted onto other people's infrastructure (DNS providers, mail hosts, CDN). | **Off-target pivots are recorded, not followed.** NS/MX/SOA results that sit outside the target's domains are kept in the graph and listed in the report as related third-party assets. Scope creep is a finding, not an action. | `app/scan` (`on_target`), report section "Related third-party assets" |
 | 4 | Name-only hits on wanted/sanctions lists were close to being attached to the subject. | **Candidates, never merges.** Each name-only legal hit is a separate `candidate` entity (keyed by name + official listing), linked only through a low-confidence `possible_match` edge. An analyst confirms it with a disambiguator (DOB, nationality, ID); the confirmation is audited. | `app/resolver` |
 | 5 | Fact-checking a finished report meant re-reading every source by hand; inline citations were added and later stripped with a regex. | **Claim-level report model.** Each claim lists the finding ids behind it. Citations and evidence numbering are generated at render time, so they can be turned on or off without editing the text. | `app/report` |
@@ -33,7 +33,7 @@ flowchart LR
 
   subgraph ledger["Ledger.run — every connector call"]
     direction TB
-    gate{"Gate<br/>allow/deny list<br/>active → mode + authorization<br/>+ this investigation's scope"}
+    gate{"Gate<br/>allow/deny list<br/>active → mode"}
     call["Connector"]
     rec[("finding row<br/>raw JSON file + sha256")]
     res["Resolver<br/>dedupe · provenance · confidence<br/>legal hits → candidates"]

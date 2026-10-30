@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
+import { RefreshCw, ScrollText } from "lucide-react";
 import { api, qs } from "../api";
 import type { AuditEvent } from "../types";
-import { Badge, Empty, ErrorBox, Mono, useLoad, when } from "./ui";
+import { Badge, Empty, ErrorBox, Loading, Mono, Segmented, useLoad, when } from "./ui";
 
 export function AuditView({ investigationId }: { investigationId: string }) {
   const [rows, error, loading, reload] = useLoad(
@@ -18,27 +19,19 @@ export function AuditView({ investigationId }: { investigationId: string }) {
   }, [rows, filter]);
 
   return (
-    <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-5 py-4">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+    <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto w-full max-w-6xl px-6 py-5">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <p className="mr-auto max-w-prose text-sm text-muted">
           Every action and lookup in this investigation, newest first. Entries cannot be edited or deleted.
         </p>
-        <div className="flex rounded-md border border-line p-0.5 text-xs" role="group" aria-label="Filter">
-          {([
-            ["all", "Everything"],
-            ["people", "Analyst actions"],
-            ["refused", "Blocked or failed"],
-          ] as const).map(([k, label]) => (
-            <button key={k} onClick={() => setFilter(k)} aria-pressed={filter === k}
-              className={`rounded px-2.5 py-1 ${filter === k ? "bg-raised text-ink" : "text-muted hover:text-ink"}`}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <button className="btn px-2.5 py-1 text-xs" onClick={reload} disabled={loading}>Refresh</button>
+        <Segmented label="Show" value={filter} onChange={setFilter}
+          options={[["all", "Everything"], ["people", "Analyst actions"], ["refused", "Blocked or failed"]]} />
+        <button className="btn btn-sm" onClick={reload} disabled={loading}><RefreshCw className="h-3.5 w-3.5" aria-hidden />Refresh</button>
       </div>
       {error ? <ErrorBox error={error} /> : null}
-      {rows && shown.length === 0 && <Empty title="Nothing matches this filter" />}
+      {!rows && !error && <Loading>Loading the audit log</Loading>}
+      {rows && shown.length === 0 && <Empty title="Nothing matches this filter" icon={<ScrollText className="h-8 w-8" />} />}
       {shown.length > 0 && (
         <table className="w-full border-collapse text-sm">
           <thead>
@@ -54,15 +47,15 @@ export function AuditView({ investigationId }: { investigationId: string }) {
           <tbody>
             {shown.map((r) => (
               <tr key={r.id} className="border-b border-line/60 align-top">
-                <td className="whitespace-nowrap py-1.5 pr-4 text-muted">{when(r.ts)}</td>
-                <td className="py-1.5 pr-4">{r.user}</td>
-                <td className="py-1.5 pr-4">
+                <td className="whitespace-nowrap py-2 pr-4 text-muted">{when(r.ts)}</td>
+                <td className="py-2 pr-4">{r.user}</td>
+                <td className="py-2 pr-4">
                   {r.action}
                   {r.connector && <span className="text-muted"> ({r.connector})</span>}
                 </td>
-                <td className="max-w-[16rem] truncate py-1.5 pr-4"><Mono>{r.target || "—"}</Mono></td>
-                <td className="py-1.5 pr-4"><Badge value={r.outcome} /></td>
-                <td className="py-1.5">
+                <td className="max-w-[16rem] truncate py-2 pr-4"><Mono>{r.target || "—"}</Mono></td>
+                <td className="py-2 pr-4"><Badge value={r.outcome} /></td>
+                <td className="py-2">
                   <Mono className="line-clamp-2 break-all text-muted">
                     {typeof r.detail?.reason === "string" ? r.detail.reason : JSON.stringify(r.detail)}
                   </Mono>
@@ -72,6 +65,7 @@ export function AuditView({ investigationId }: { investigationId: string }) {
           </tbody>
         </table>
       )}
+      </div>
     </div>
   );
 }

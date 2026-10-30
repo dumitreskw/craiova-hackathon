@@ -15,7 +15,6 @@ from ..models.schemas import (
     InvestigationUpdate,
     ScanRequest,
     TargetCreate,
-    _check_active,
 )
 from ..platform import Platform
 from ..resolver import entity_view
@@ -42,15 +41,14 @@ async def create_investigation(body: InvestigationCreate, p: Platform = Depends(
     inv = {
         "id": new_id("inv"), "name": body.name, "purpose": body.purpose,
         "legal_basis": body.legal_basis, "mode": body.mode,
-        "scope": [s.strip().lower() for s in body.scope if s.strip()],
-        "authorization": body.authorization, "settings": body.settings.model_dump(),
+        "settings": body.settings.model_dump(),
         "retention_days": body.retention_days or p.settings.retention_days,
         "legal_hold": 0, "created_by": user, "created_at": now(),
     }
     p.db.insert("investigations", inv)
     p.db.audit(user=user, action="investigation.create", investigation_id=inv["id"],
                detail={"purpose": body.purpose, "legal_basis": body.legal_basis,
-                       "mode": body.mode, "scope": inv["scope"]})
+                       "mode": body.mode})
     return _public(load_investigation(p, inv["id"]))
 
 
@@ -75,17 +73,10 @@ async def update_investigation(investigation_id: str, body: InvestigationUpdate,
                                user: str = Depends(current_user)):
     inv = load_investigation(p, investigation_id)
     changes = body.model_dump(exclude_unset=True)
-    if "scope" in changes:
-        changes["scope"] = [s.strip().lower() for s in changes["scope"] if s.strip()]
-    merged = {**inv, **changes}
-    try:
-        _check_active(merged["mode"], merged["scope"], merged["authorization"])
-    except ValueError as e:
-        raise HTTPException(422, str(e)) from e
     if not changes:
         return _public(inv)
     p.db.update("investigations", investigation_id, changes)
-    # Scope and mode changes are what authorizes active traffic: audit the diff.
+    # Audit the diff.
     p.db.audit(user=user, action="investigation.update", investigation_id=investigation_id,
                detail={k: {"from": inv.get(k), "to": v} for k, v in changes.items()})
     return _public(load_investigation(p, investigation_id))

@@ -2,9 +2,8 @@
 
 Fetches the page, so it is active toward whatever host serves the URL. For
 news articles, profiles and official listings that host is a third party.
-The app (``app/evidence.py``) refuses to capture the target's own hosts
-unless the investigation is active and the host is in scope; this module
-only does the rendering.
+The app (``app/evidence.py``) refuses active connectors unless the
+investigation is in active mode; this module only does the rendering.
 
 The PNG gets a source banner (URL + capture time, UTC) composed on top, so a
 screenshot pasted into a report still says where it came from. The banner

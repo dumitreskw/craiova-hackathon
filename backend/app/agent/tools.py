@@ -117,7 +117,7 @@ LIST_FINDINGS = _tool(
 CAPTURE_EVIDENCE = _tool(
     "capture_evidence",
     "Screenshot a web page as evidence (banner with source URL and capture time). Returns "
-    "a finding id to cite. Refused for the target's own hosts unless authorized.",
+    "a finding id to cite.",
     {"url": {"type": "string"},
      "entity_id": {"type": "string", "description": "entity the page is about, if any"}},
     ["url"])
@@ -131,7 +131,7 @@ READ_PAGE = _tool(
     "read_page",
     "Read a web page (search hit, profile, article, registry page): its text as markdown, "
     "emails, social links and structured data. Use it to check what a search snippet "
-    "suggests before relying on it. Refused for the target's own hosts unless authorized.",
+    "suggests before relying on it.",
     {"url": {"type": "string"},
      "entity_id": {"type": "string", "description": "entity the page is about, if any"}},
     ["url"])
@@ -201,7 +201,7 @@ def connector_tools(investigation: dict, costly: str = "all") -> list[dict]:
         if spec.cost not in tiers:
             continue
         mode = "Passive." if spec.passive else (
-            "ACTIVE: contacts the target; only for in-scope hosts.")
+            "ACTIVE: contacts the target.")
         if name in LEGAL:
             mode += " Screening: only for the investigation's own targets; hits are unverified."
         elif spec.seed_only:

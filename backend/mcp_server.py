@@ -12,8 +12,8 @@ Run locally:
     uv run mcp dev mcp_server.py           # MCP Inspector
 
 Each tool marks itself passive or active in its description. The server has
-no notion of an investigation's scope, so the active tool (http_probe) is only
-registered when MCP_ALLOW_ACTIVE=1; the app enforces scope for its own agents.
+no notion of an investigation's mode, so the active tool (http_probe) is only
+registered when MCP_ALLOW_ACTIVE=1; the app enforces active-mode for its own agents.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ async def http_probe_site(domain: str) -> dict[str, Any]:
     return (await http_probe(domain)).to_dict()
 
 
-# The MCP server has no investigation scope to check, so the one ACTIVE tool is
+# The MCP server has no investigation mode to check, so the one ACTIVE tool is
 # only exposed when explicitly enabled (local use). The deployed server
 # (docker-compose, reachable at /mcp) stays passive-only.
 if os.environ.get("MCP_ALLOW_ACTIVE") == "1":

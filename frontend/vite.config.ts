@@ -16,6 +16,6 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: true,
-    rollupOptions: { output: { manualChunks: { cytoscape: ["cytoscape"] } } },
+    rollupOptions: { output: { manualChunks: { graph: ["sigma", "graphology", "graphology-layout-forceatlas2"] } } },
   },
 });

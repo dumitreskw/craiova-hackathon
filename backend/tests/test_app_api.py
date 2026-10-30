@@ -117,12 +117,9 @@ NEW_INV = {"name": "Example SRL", "purpose": "Vendor due diligence before contra
            "legal_basis": "legitimate_interest"}
 
 
-async def test_api_requires_purpose_and_authorization_for_active(client):
+async def test_api_requires_purpose(client):
     r = await client.post("/investigations", json={**NEW_INV, "purpose": "x"})
     assert r.status_code == 422
-    r = await client.post("/investigations", json={**NEW_INV, "mode": "active",
-                                                   "scope": ["example.com"]})
-    assert r.status_code == 422 and "authorization" in r.text
     r = await client.post("/investigations", json={**NEW_INV, "legal_basis": "because"})
     assert r.status_code == 422
 
@@ -193,12 +190,9 @@ async def test_api_delete_purges_and_respects_legal_hold(client, platform):
     assert (await client.get(f"/investigations/{inv_id}")).status_code == 404
 
 
-async def test_api_switching_to_active_needs_authorization(client):
+async def test_api_switching_to_active_mode(client):
     inv_id = (await client.post("/investigations", json=NEW_INV)).json()["id"]
     r = await client.patch(f"/investigations/{inv_id}", json={"mode": "active"})
-    assert r.status_code == 422
-    r = await client.patch(f"/investigations/{inv_id}", json={
-        "mode": "active", "scope": ["example.com"], "authorization": "SOW-42 signed 2026-10-30"})
     assert r.status_code == 200 and r.json()["mode"] == "active"
 
 

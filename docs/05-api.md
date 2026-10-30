@@ -20,8 +20,6 @@ DELETE /investigations/{id}            delete (soft) + purge evidence job
   "purpose": "Vendor vetting before contract",
   "legal_basis": "legitimate_interest",  // GDPR Art. 6 basis
   "mode": "passive",                // passive | active
-  "scope": [],                      // active mode: hosts/domains/CIDRs authorized for active connectors
-  "authorization": null,            // active mode: who authorized it, when, reference document
   "retention_days": 90,
   "settings": {
     "max_depth": 2,

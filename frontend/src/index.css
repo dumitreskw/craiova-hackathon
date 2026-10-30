@@ -2,52 +2,59 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Map-room palette: ink-blue ground, survey-yellow highlighter for actions and
-   confirmed facts, red reserved for "unverified" and failures. */
+/* Evidence-room palette. Slate ground, a darker light-table for the graph,
+   evidence-tag amber for actions, targets and confirmed facts. Red is kept
+   for "unverified" and failures, green for verified and healthy. */
 :root {
-  --ground: 23 30 43;
-  --panel: 29 38 54;
-  --raised: 37 48 67;
-  --line: 52 66 90;
-  --ink: 228 233 241;
-  --muted: 146 160 184;
-  --accent: 242 201 76;
-  --accent-ink: 33 27 8;
-  --danger: 229 72 77;
-  --ok: 94 196 140;
-  --warn: 240 160 70;
+  --ground: 22 29 37;
+  --panel: 28 37 47;
+  --raised: 38 49 61;
+  --line: 55 69 84;
+  --ink: 232 237 242;
+  --muted: 160 174 189;
+  --accent: 240 180 76;
+  --accent-ink: 35 24 3;
+  --accent-text: 245 196 110;
+  --danger: 244 112 112;
+  --ok: 86 202 145;
+  --warn: 236 150 76;
+  --canvas: 16 22 29;
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --ground: 236 240 246;
+    --ground: 238 241 245;
     --panel: 255 255 255;
-    --raised: 226 232 241;
-    --line: 196 205 220;
-    --ink: 22 30 44;
-    --muted: 82 96 120;
-    --accent: 224 177 43;
-    --accent-ink: 33 27 8;
-    --danger: 196 38 48;
-    --ok: 28 135 78;
-    --warn: 184 104 16;
+    --raised: 229 234 240;
+    --line: 203 211 221;
+    --ink: 21 29 38;
+    --muted: 80 93 108;
+    --accent: 232 166 52;
+    --accent-ink: 35 24 3;
+    --accent-text: 146 92 0;
+    --danger: 190 36 46;
+    --ok: 22 128 74;
+    --warn: 176 92 10;
+    --canvas: 247 249 251;
     color-scheme: light;
   }
 }
 
 :root[data-theme="light"] {
-  --ground: 236 240 246;
+  --ground: 238 241 245;
   --panel: 255 255 255;
-  --raised: 226 232 241;
-  --line: 196 205 220;
-  --ink: 22 30 44;
-  --muted: 82 96 120;
-  --accent: 224 177 43;
-  --accent-ink: 33 27 8;
-  --danger: 196 38 48;
-  --ok: 28 135 78;
-  --warn: 184 104 16;
+  --raised: 229 234 240;
+  --line: 203 211 221;
+  --ink: 21 29 38;
+  --muted: 80 93 108;
+  --accent: 232 166 52;
+  --accent-ink: 35 24 3;
+  --accent-text: 146 92 0;
+  --danger: 190 36 46;
+  --ok: 22 128 74;
+  --warn: 176 92 10;
+  --canvas: 247 249 251;
   color-scheme: light;
 }
 
@@ -60,37 +67,64 @@ body,
 body {
   @apply bg-ground text-ink font-sans antialiased;
   font-size: 14px;
-  line-height: 1.45;
+  line-height: 1.5;
+  font-feature-settings: "tnum" 1;
 }
 
 :focus-visible {
   outline: 2px solid rgb(var(--accent));
   outline-offset: 2px;
+  border-radius: 4px;
 }
 
 @layer components {
   .field {
-    @apply w-full rounded-md border border-line bg-ground px-2.5 py-1.5 text-sm text-ink placeholder:text-muted/70
-      focus:border-accent focus:outline-none;
+    @apply min-h-[36px] w-full rounded-md border border-line bg-ground px-3 py-1.5 text-sm text-ink
+      transition-colors duration-150 placeholder:text-muted hover:border-muted/70
+      focus:border-accent focus:outline-none focus-visible:outline-none focus:ring-2 focus:ring-accent/30;
   }
   .btn {
-    @apply inline-flex items-center gap-1.5 rounded-md border border-line bg-raised px-3 py-1.5 text-sm font-medium text-ink
-      hover:border-muted disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex min-h-[36px] items-center justify-center gap-2 whitespace-nowrap rounded-md border border-line
+      bg-raised px-3.5 text-sm font-medium text-ink transition-colors duration-150
+      hover:border-muted/80 hover:bg-raised/70 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-sm {
+    @apply min-h-[30px] gap-1.5 px-2.5 text-xs;
   }
   .btn-primary {
-    @apply border-accent bg-accent text-accent-ink hover:brightness-105 hover:border-accent;
+    @apply border-accent bg-accent text-accent-ink hover:border-accent hover:bg-accent/90;
   }
   .btn-danger {
-    @apply border-danger/60 bg-transparent text-danger hover:bg-danger/10 hover:border-danger;
+    @apply border-danger/60 bg-transparent text-danger hover:border-danger hover:bg-danger/10;
   }
   .btn-quiet {
-    @apply border-transparent bg-transparent text-muted hover:text-ink hover:border-line;
+    @apply border-transparent bg-transparent text-muted hover:border-transparent hover:bg-raised hover:text-ink;
+  }
+  .icon-btn {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-md text-muted transition-colors duration-150
+      hover:bg-raised hover:text-ink disabled:opacity-40;
   }
   .label {
-    @apply mb-1 block text-xs font-medium text-muted;
+    @apply mb-1.5 block text-xs font-medium text-ink/85;
+  }
+  .hint {
+    @apply text-xs text-muted;
   }
   .panel {
     @apply rounded-lg border border-line bg-panel;
+  }
+  .section-title {
+    @apply text-[15px] font-semibold text-ink;
+  }
+  .seg {
+    @apply inline-flex rounded-md border border-line bg-ground p-0.5;
+  }
+  .seg-item {
+    @apply inline-flex min-h-[28px] items-center gap-1.5 rounded px-2.5 text-xs font-medium text-muted transition-colors
+      duration-150 hover:text-ink aria-pressed:bg-raised aria-pressed:text-ink aria-pressed:shadow-sm;
+  }
+  .floating {
+    @apply rounded-lg border border-line/80 bg-panel/95 shadow-float backdrop-blur;
   }
   .scroll-thin {
     scrollbar-width: thin;
@@ -98,8 +132,17 @@ body {
   }
 }
 
+/* The graph's light table: a faint survey grid under the WebGL canvas. */
+.graph-surface {
+  background-color: rgb(var(--canvas));
+  background-image: radial-gradient(rgb(var(--line) / 0.55) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation: none !important;
     transition: none !important;
   }

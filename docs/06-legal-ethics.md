@@ -12,7 +12,7 @@ This section defines the guardrails built into the platform.
    pentest engagement, legal obligation for KYC/AML).
 2. **Passive by default**: active connectors (anything that sends traffic to
    the target's infrastructure) are off unless the investigation is marked
-   `active` and the user confirms written authorization for that scope.
+   `active`.
 3. **Data minimization**: collect what serves the purpose. Breach connectors
    return metadata (which breach, which data classes) and **never plaintext
    passwords**.
@@ -27,7 +27,6 @@ This section defines the guardrails built into the platform.
 | Control                          | Implementation                                           |
 |----------------------------------|----------------------------------------------------------|
 | Purpose & legal basis            | Required fields on investigation creation               |
-| Authorization attestation        | Checkbox + uploaded scope document for `active` mode    |
 | RBAC                             | Viewers can't run connectors; only admins manage keys   |
 | Sensitive-category filter        | Flag/hide health, religion, political, sexual orientation data (GDPR Art. 9) |
 | Minors                           | Person entities with indicators of being under 18 are blocked from further pivoting |

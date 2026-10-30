@@ -24,8 +24,6 @@ CREATE TABLE IF NOT EXISTS investigations (
     purpose         TEXT NOT NULL,
     legal_basis     TEXT NOT NULL,
     mode            TEXT NOT NULL DEFAULT 'passive',      -- passive | active
-    scope           TEXT NOT NULL DEFAULT '[]',           -- JSON list of hosts/domains/IPs
-    authorization   TEXT,                                 -- who authorized active work, when, ref
     settings        TEXT NOT NULL DEFAULT '{}',
     retention_days  INTEGER NOT NULL,
     legal_hold      INTEGER NOT NULL DEFAULT 0,
@@ -160,7 +158,7 @@ CREATE INDEX IF NOT EXISTS ix_edges_inv ON edges(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_audit_inv ON audit(investigation_id, ts);
 """
 
-JSON_COLUMNS = {"scope", "settings", "input", "attributes", "stats", "body", "detail",
+JSON_COLUMNS = {"settings", "input", "attributes", "stats", "body", "detail",
                 "transcript"}
 
 # Columns added after the first release: (table, column, DDL). Applied on open,

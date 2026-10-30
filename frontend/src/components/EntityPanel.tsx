@@ -1,13 +1,28 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
+import {
+  Camera, Check, FileSearch, Link2, NotebookPen, Search, ShieldAlert, X,
+} from "lucide-react";
 import { api } from "../api";
 import { typeColor } from "../entityStyle";
 import type { Connector, EntityDetail, Finding } from "../types";
-import { Badge, ErrorBox, JsonView, Modal, Mono, shortHash, useLoad, when } from "./ui";
+import { Badge, ErrorBox, JsonView, Loading, Meter, Modal, Mono, shortHash, Spinner, useLoad, when } from "./ui";
 
 function fmt(v: unknown): string {
   if (v === null || v === undefined) return "—";
   if (typeof v === "string") return v;
   return JSON.stringify(v);
+}
+
+function Section({ title, count, children }: { title: string; count?: number; children: ReactNode }) {
+  return (
+    <section>
+      <h3 className="mb-2 flex items-baseline gap-2 text-sm font-semibold">
+        {title}
+        {count !== undefined && <span className="text-xs font-normal text-muted">{count}</span>}
+      </h3>
+      {children}
+    </section>
+  );
 }
 
 export function EntityPanel({
@@ -23,39 +38,24 @@ export function EntityPanel({
   const [connectors] = useLoad(() => api.get<Connector[]>("/connectors"), []);
   const [finding, setFinding] = useState<string | null>(null);
   const [action, setAction] = useState<"confirm" | "reject" | "pivot" | "note" | null>(null);
-  const [capturing, setCapturing] = useState(false);
-  const [captureError, setCaptureError] = useState<unknown>(null);
+  const [busy, setBusy] = useState<"read" | "capture" | null>(null);
+  const [actionError, setActionError] = useState<unknown>(null);
 
-  const [reading, setReading] = useState(false);
-
-  async function readPage(url: string, id: string) {
-    setReading(true);
-    setCaptureError(null);
+  async function urlAction(kind: "read" | "capture", url: string, id: string) {
+    setBusy(kind);
+    setActionError(null);
     try {
-      await api.post(`/investigations/${investigationId}/read`, { url, entity_id: id });
+      await api.post(`/investigations/${investigationId}/${kind}`, { url, entity_id: id });
       reload();
     } catch (err) {
-      setCaptureError(err);
+      setActionError(err);
     } finally {
-      setReading(false);
-    }
-  }
-
-  async function captureEvidence(url: string, id: string) {
-    setCapturing(true);
-    setCaptureError(null);
-    try {
-      await api.post(`/investigations/${investigationId}/capture`, { url, entity_id: id });
-      reload();
-    } catch (err) {
-      setCaptureError(err);
-    } finally {
-      setCapturing(false);
+      setBusy(null);
     }
   }
 
   if (error) return <div className="p-4"><ErrorBox error={error} /></div>;
-  if (!ent) return <p className="p-4 text-sm text-muted">{loading ? "Loading…" : ""}</p>;
+  if (!ent) return loading ? <Loading>Loading entity</Loading> : null;
 
   const candidate = ent.status === "candidate";
   const applicable = (connectors || []).filter((c) => c.accepts === ent.type);
@@ -63,40 +63,40 @@ export function EntityPanel({
   const screenshotFinding = ent.type === "Document" && ent.attributes.kind === "screenshot"
     ? ent.sources.find((s) => s.connector === "screenshot")?.id
     : undefined;
+  const isUrl = ent.type === "URL" && /^https?:\/\//.test(ent.key);
 
   return (
-    <div className="space-y-5 p-4">
+    <div className="space-y-6 p-5">
       <div>
-        <div className="flex items-center gap-2 text-xs text-muted">
-          <span className="h-2.5 w-2.5 rounded-full" style={{ background: typeColor(ent.type) }} />
+        <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
+          <span className={`h-3 w-3 rounded-full ${candidate ? "ring-2 ring-danger ring-offset-2 ring-offset-panel" : ""}`}
+            style={{ background: typeColor(ent.type) }} aria-hidden />
           {ent.type}
           <Badge value={ent.status} />
         </div>
-        <h2 className="mt-1 break-words text-base font-semibold">{ent.label}</h2>
-        {ent.label !== ent.key && <Mono className="break-all text-muted">{ent.key}</Mono>}
-        <div className="mt-3">
-          <div className="flex justify-between text-xs text-muted">
-            <span>Confidence</span>
+        <h2 className="mt-2 break-words text-lg font-semibold leading-snug">{ent.label}</h2>
+        {ent.label !== ent.key && <Mono className="mt-0.5 block break-all text-muted">{ent.key}</Mono>}
+        <div className="mt-4">
+          <div className="mb-1.5 flex justify-between text-xs">
+            <span className="text-muted">Confidence</span>
             <span className="font-mono">{ent.confidence.toFixed(2)}</span>
           </div>
-          <div className="mt-1 h-1.5 overflow-hidden rounded bg-raised">
-            <div className={`h-full ${candidate ? "bg-danger" : "bg-accent"}`} style={{ width: `${Math.round(ent.confidence * 100)}%` }} />
-          </div>
-          <p className="mt-1 text-2xs text-muted">
+          <Meter fraction={ent.confidence} tone={candidate ? "danger" : "accent"} label="Confidence" />
+          <p className="mt-1.5 text-xs text-muted">
             From {ent.sources.length} source{ent.sources.length === 1 ? "" : "s"}; first seen {when(ent.first_seen)}.
           </p>
         </div>
       </div>
 
       {candidate && (
-        <div className="rounded-md border border-dashed border-danger/70 bg-danger/5 p-3 text-sm">
-          <p className="font-medium text-danger">Name match only, not confirmed</p>
-          <p className="mt-1 text-muted">
-            This listing shares a name with your subject. Many people share names. Confirm it only if a detail
+        <div className="rounded-md border border-dashed border-danger/70 bg-danger/5 p-3.5 text-sm">
+          <p className="flex items-center gap-2 font-medium text-danger"><ShieldAlert className="h-4 w-4" aria-hidden />Name match only, not confirmed</p>
+          <p className="mt-1.5 text-muted">
+            This listing shares a name with your subject, and many people share names. Confirm it only if a detail
             such as date of birth, nationality, a photo or an ID number matches.
           </p>
           {disambiguators && Object.keys(disambiguators).length > 0 && (
-            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+            <dl className="mt-2.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
               {Object.entries(disambiguators).map(([k, v]) => (
                 <div key={k} className="contents">
                   <dt className="text-muted">{k.replace(/_/g, " ")}</dt>
@@ -108,31 +108,29 @@ export function EntityPanel({
         </div>
       )}
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-2">
         {ent.status !== "confirmed" && (
-          <button className="btn px-2.5 py-1 text-xs" onClick={() => setAction("confirm")}>Confirm</button>
+          <button className="btn btn-sm" onClick={() => setAction("confirm")}><Check className="h-3.5 w-3.5" aria-hidden />Confirm</button>
         )}
         {ent.status !== "rejected" && (
-          <button className="btn btn-danger px-2.5 py-1 text-xs" onClick={() => setAction("reject")}>Reject</button>
+          <button className="btn btn-danger btn-sm" onClick={() => setAction("reject")}><X className="h-3.5 w-3.5" aria-hidden />Reject</button>
         )}
         {!candidate && ent.status !== "rejected" && applicable.length > 0 && (
-          <button className="btn px-2.5 py-1 text-xs" onClick={() => setAction("pivot")}>Look up further</button>
+          <button className="btn btn-sm" onClick={() => setAction("pivot")}><Search className="h-3.5 w-3.5" aria-hidden />Look up further</button>
         )}
-        {ent.type === "URL" && /^https?:\/\//.test(ent.key) && (
+        {isUrl && (
           <>
-            <button className="btn px-2.5 py-1 text-xs" disabled={reading}
-              onClick={() => readPage(ent.key, ent.id)}>
-              {reading ? "Reading…" : "Read page"}
+            <button className="btn btn-sm" disabled={busy !== null} onClick={() => urlAction("read", ent.key, ent.id)}>
+              {busy === "read" ? <Spinner className="h-3.5 w-3.5" /> : <FileSearch className="h-3.5 w-3.5" aria-hidden />}Read page
             </button>
-            <button className="btn px-2.5 py-1 text-xs" disabled={capturing}
-              onClick={() => captureEvidence(ent.key, ent.id)}>
-              {capturing ? "Capturing…" : "Capture evidence"}
+            <button className="btn btn-sm" disabled={busy !== null} onClick={() => urlAction("capture", ent.key, ent.id)}>
+              {busy === "capture" ? <Spinner className="h-3.5 w-3.5" /> : <Camera className="h-3.5 w-3.5" aria-hidden />}Capture evidence
             </button>
           </>
         )}
-        <button className="btn btn-quiet px-2.5 py-1 text-xs" onClick={() => setAction("note")}>Add note</button>
+        <button className="btn btn-quiet btn-sm" onClick={() => setAction("note")}><NotebookPen className="h-3.5 w-3.5" aria-hidden />Add note</button>
       </div>
-      {captureError !== null && <ErrorBox error={captureError} onDismiss={() => setCaptureError(null)} />}
+      {actionError !== null && <ErrorBox error={actionError} onDismiss={() => setActionError(null)} />}
 
       {screenshotFinding && (
         <a href={`/api/v1/findings/${screenshotFinding}/screenshot`} target="_blank" rel="noreferrer"
@@ -153,85 +151,85 @@ export function EntityPanel({
         <NoteForm entityId={ent.id} onDone={() => { setAction(null); reload(); }} onCancel={() => setAction(null)} />
       )}
 
-      <section>
-        <h3 className="mb-1.5 text-xs font-semibold text-muted">Attributes</h3>
+      <Section title="Attributes">
         {Object.keys(ent.attribute_sources).length === 0 ? (
           <p className="text-sm text-muted">None recorded.</p>
         ) : (
-          <dl className="space-y-1.5 text-sm">
+          <dl className="space-y-2.5 text-sm">
             {Object.entries(ent.attribute_sources).map(([name, values]) => (
               <div key={name}>
                 <dt className="text-xs text-muted">
                   {name.replace(/_/g, " ")}
-                  {values.length > 1 && <span className="ml-1.5 text-warn">sources disagree</span>}
+                  {values.length > 1 && <span className="ml-1.5 font-medium text-warn">sources disagree</span>}
                 </dt>
                 {values.map((v, i) => (
                   <dd key={i} className="flex items-baseline gap-2 break-all">
-                    <span className={values.length > 1 ? "text-ink" : ""}>{fmt(v.value)}</span>
-                    {values.length > 1 && <span className="shrink-0 text-2xs text-muted">{v.sources.length} source(s)</span>}
+                    <span>{fmt(v.value)}</span>
+                    {values.length > 1 && <span className="shrink-0 text-xs text-muted">{v.sources.length} source(s)</span>}
                   </dd>
                 ))}
               </div>
             ))}
           </dl>
         )}
-      </section>
+      </Section>
 
-      <section>
-        <h3 className="mb-1.5 text-xs font-semibold text-muted">Where this came from</h3>
-        <ul className="space-y-1">
+      <Section title="Where this came from" count={ent.sources.length}>
+        <ul className="space-y-1.5">
           {ent.sources.map((s) => (
             <li key={s.id}>
               <button onClick={() => setFinding(s.id)}
-                className="w-full rounded-md border border-line px-2.5 py-1.5 text-left hover:border-muted">
+                className="w-full rounded-md border border-line px-3 py-2 text-left transition-colors duration-150 hover:border-muted/70 hover:bg-raised/50">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-sm font-medium">{s.connector}</span>
-                  <span className="text-2xs text-muted">{when(s.fetched_at)}</span>
+                  <span className="text-xs text-muted">{when(s.fetched_at)}</span>
                 </div>
-                <div className="flex items-baseline justify-between gap-2 text-2xs text-muted">
-                  <Mono className="truncate">{String(s.input?.arg ?? "")}</Mono>
-                  <Mono>sha256 {shortHash(s.sha256, 8)}</Mono>
+                <div className="mt-0.5 flex items-baseline justify-between gap-2 text-xs text-muted">
+                  <Mono className="truncate text-xs">{String(s.input?.arg ?? "")}</Mono>
+                  <Mono className="shrink-0 text-xs">sha256 {shortHash(s.sha256, 8)}</Mono>
                 </div>
               </button>
             </li>
           ))}
           {ent.sources.length === 0 && <li className="text-sm text-muted">Added by you as a target; no lookup has returned it yet.</li>}
         </ul>
-      </section>
+      </Section>
 
-      <section>
-        <h3 className="mb-1.5 text-xs font-semibold text-muted">Links ({ent.edges.length})</h3>
-        <ul className="space-y-0.5 text-sm">
-          {ent.edges.slice(0, 60).map((e) => {
+      <Section title="Links" count={ent.edges.length}>
+        <ul className="space-y-1 text-sm">
+          {ent.edges.slice(0, 80).map((e) => {
             const outgoing = e.source === ent.id;
             const other = outgoing ? e.target : e.source;
-            const label = e.other ? `${e.other.type}: ${e.other.label}` : other;
+            const label = e.other ? e.other.label : other;
             return (
               <li key={e.id} className="flex items-baseline gap-2">
+                <Link2 className={`h-3.5 w-3.5 shrink-0 translate-y-0.5 ${e.type === "possible_match" ? "text-danger" : "text-muted"}`} aria-hidden />
                 <span className={`shrink-0 text-xs ${e.type === "possible_match" ? "text-danger" : "text-muted"}`}>
-                  {outgoing ? e.type : `${e.type} (from)`}
+                  {(outgoing ? e.type : `${e.type} from`).replace(/_/g, " ")}
                 </span>
-                <button className={`truncate text-left text-[12px] hover:underline ${e.other ? "" : "font-mono"}`}
-                  title={e.other?.key ?? other} onClick={() => onSelect(other)}>{label}</button>
+                <button className={`min-w-0 truncate text-left hover:underline ${e.other ? "" : "font-mono text-[13px]"}`}
+                  title={e.other ? `${e.other.type}: ${e.other.key}` : other} onClick={() => onSelect(other)}>
+                  {e.other && <span className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle" style={{ background: typeColor(e.other.type) }} aria-hidden />}
+                  {label}
+                </button>
               </li>
             );
           })}
-          {ent.edges.length > 60 && <li className="text-xs text-muted">{ent.edges.length - 60} more not listed.</li>}
+          {ent.edges.length > 80 && <li className="text-xs text-muted">{ent.edges.length - 80} more not listed.</li>}
         </ul>
-      </section>
+      </Section>
 
       {ent.notes.length > 0 && (
-        <section>
-          <h3 className="mb-1.5 text-xs font-semibold text-muted">Notes</h3>
+        <Section title="Notes" count={ent.notes.length}>
           <ul className="space-y-2">
             {ent.notes.map((n) => (
-              <li key={n.id} className="rounded-md bg-raised px-3 py-2 text-sm">
+              <li key={n.id} className="rounded-md bg-raised px-3 py-2.5 text-sm">
                 <p className="whitespace-pre-wrap">{n.body}</p>
-                <p className="mt-1 text-2xs text-muted">{n.author}, {when(n.created_at)}</p>
+                <p className="mt-1 text-xs text-muted">{n.author}, {when(n.created_at)}</p>
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
 
       {finding && <FindingModal id={finding} investigationId={investigationId} onClose={() => setFinding(null)} />}
@@ -254,7 +252,7 @@ function StatusForm({ entityId, kind, candidate, onDone, onCancel }: {
     }
   }
   return (
-    <form onSubmit={submit} className="space-y-2 rounded-md border border-line bg-ground p-3">
+    <form onSubmit={submit} className="space-y-2 rounded-md border border-line bg-ground p-3.5">
       <label className="label" htmlFor="reason">
         {kind === "confirm"
           ? candidate ? "Which detail matches the subject?" : "Why is this confirmed?"
@@ -265,10 +263,10 @@ function StatusForm({ entityId, kind, candidate, onDone, onCancel }: {
       <p className="text-2xs text-muted">Saved in the audit log with your name.</p>
       <ErrorBox error={error} />
       <div className="flex gap-2">
-        <button className={`btn ${kind === "reject" ? "btn-danger" : "btn-primary"} px-2.5 py-1 text-xs`} disabled={reason.trim().length < 3}>
+        <button className={`btn btn-sm ${kind === "reject" ? "btn-danger" : "btn-primary"}`} disabled={reason.trim().length < 3}>
           {kind === "confirm" ? "Confirm" : "Reject"}
         </button>
-        <button type="button" className="btn btn-quiet px-2.5 py-1 text-xs" onClick={onCancel}>Cancel</button>
+        <button type="button" className="btn btn-quiet btn-sm" onClick={onCancel}>Cancel</button>
       </div>
     </form>
   );
@@ -292,7 +290,7 @@ function PivotForm({ entityId, connectors, onDone, onCancel }: {
     }
   }
   return (
-    <form onSubmit={submit} className="space-y-2 rounded-md border border-line bg-ground p-3">
+    <form onSubmit={submit} className="space-y-2 rounded-md border border-line bg-ground p-3.5">
       <p className="label">Sources to ask about this entity</p>
       {connectors.map((c) => (
         <label key={c.name} className="flex items-start gap-2 text-sm">
@@ -318,8 +316,8 @@ function PivotForm({ entityId, connectors, onDone, onCancel }: {
       ))}
       <ErrorBox error={error} />
       <div className="flex gap-2">
-        <button className="btn btn-primary px-2.5 py-1 text-xs" disabled={!chosen.size}>Run lookups</button>
-        <button type="button" className="btn btn-quiet px-2.5 py-1 text-xs" onClick={onCancel}>Cancel</button>
+        <button className="btn btn-primary btn-sm" disabled={!chosen.size}>Run lookups</button>
+        <button type="button" className="btn btn-quiet btn-sm" onClick={onCancel}>Cancel</button>
       </div>
     </form>
   );
@@ -338,12 +336,12 @@ function NoteForm({ entityId, onDone, onCancel }: { entityId: string; onDone: ()
     }
   }
   return (
-    <form onSubmit={submit} className="space-y-2 rounded-md border border-line bg-ground p-3">
+    <form onSubmit={submit} className="space-y-2 rounded-md border border-line bg-ground p-3.5">
       <textarea className="field min-h-[60px]" value={body} onChange={(e) => setBody(e.target.value)} aria-label="Note" />
       <ErrorBox error={error} />
       <div className="flex gap-2">
-        <button className="btn btn-primary px-2.5 py-1 text-xs" disabled={!body.trim()}>Save note</button>
-        <button type="button" className="btn btn-quiet px-2.5 py-1 text-xs" onClick={onCancel}>Cancel</button>
+        <button className="btn btn-primary btn-sm" disabled={!body.trim()}>Save note</button>
+        <button type="button" className="btn btn-quiet btn-sm" onClick={onCancel}>Cancel</button>
       </div>
     </form>
   );

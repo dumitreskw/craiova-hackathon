@@ -86,8 +86,8 @@ REGISTRY: dict[str, ConnectorSpec] = {
         ConnectorSpec("national_wanted", national_wanted, EntityType.PERSON, True,
                       "National police wanted lists (FBI live; RO/BE/NL wired) "
                       "(unverified matches)."),
-        # Fetches the URL's host. The app refuses the target's own hosts unless
-        # the investigation is active and in scope (app/evidence.py).
+        # Fetches the URL's host. The app refuses active connectors unless the
+        # investigation is in active mode (app/evidence.py).
         ConnectorSpec("screenshot", screenshot, EntityType.URL, True,
                       "Render a URL in headless Chromium as banner-stamped PNG evidence.",
                       timeout=60),

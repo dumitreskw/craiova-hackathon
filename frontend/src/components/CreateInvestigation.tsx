@@ -17,19 +17,12 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
   const [purpose, setPurpose] = useState("");
   const [basis, setBasis] = useState<LegalBasis>("legitimate_interest");
   const [mode, setMode] = useState<Mode>("passive");
-  const [scope, setScope] = useState("");
-  const [authorization, setAuthorization] = useState("");
   const [maxDepth, setMaxDepth] = useState(1);
-  const [costly, setCostly] = useState<"none" | "metered" | "all">("none");
+  const [costly, setCostly] = useState<"none" | "metered" | "all">("all");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
-  const scopeList = scope
-    .split(/[\s,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
   const purposeShort = purpose.trim().length < 10;
-  const activeIncomplete = mode === "active" && (!scopeList.length || !authorization.trim());
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -41,8 +34,6 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
         purpose: purpose.trim(),
         legal_basis: basis,
         mode,
-        scope: mode === "active" ? scopeList : [],
-        authorization: mode === "active" ? authorization.trim() : null,
         settings: { max_depth: maxDepth, connectors: ["*"], exclude_connectors: [],
                     costly_connectors: costly },
       });
@@ -58,8 +49,8 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
     <div className="scroll-thin overflow-y-auto">
       <form onSubmit={submit} className="mx-auto w-full max-w-2xl space-y-6 px-6 py-10">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">New investigation</h1>
-          <p className="mt-2 max-w-prose text-muted">
+          <h1 className="text-[28px] font-semibold leading-tight tracking-tight">New investigation</h1>
+          <p className="mt-2 max-w-prose text-[15px] text-muted">
             The purpose and legal basis are stored with the investigation and appear in the audit log. Write them
             for someone reviewing this work later.
           </p>
@@ -85,7 +76,7 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
             {BASES.map((b) => (
               <label key={b.value}
                 className={`flex cursor-pointer gap-2 rounded-md border px-3 py-2 ${
-                  basis === b.value ? "border-accent bg-accent/10" : "border-line hover:border-muted"}`}>
+                  basis === b.value ? "border-accent bg-accent/10" : "border-line hover:border-muted/70"}`}>
                 <input type="radio" name="basis" className="mt-1 accent-[rgb(var(--accent))]"
                   checked={basis === b.value} onChange={() => setBasis(b.value)} />
                 <span>
@@ -102,7 +93,7 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
           <div className="flex gap-2">
             {(["passive", "active"] as Mode[]).map((m) => (
               <button type="button" key={m} onClick={() => setMode(m)} aria-pressed={mode === m}
-                className={`btn flex-1 justify-center ${mode === m ? "border-accent bg-accent/10" : ""}`}>
+                className={`btn flex-1 ${mode === m ? "border-accent bg-accent/10" : ""}`}>
                 {m === "passive" ? "Passive only" : "Active allowed"}
               </button>
             ))}
@@ -110,29 +101,9 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
           <p className="mt-2 text-sm text-muted">
             {mode === "passive"
               ? "Lookups go to public sources only (DNS, registries, certificate logs, search engines). Nothing is sent to the target's own servers."
-              : "Active connectors contact the target's servers, which the owner can see and log. They run only against the hosts listed below, and only with a written authorization on record."}
+              : "Active connectors contact the target's servers, which the owner can see and log."}
           </p>
         </fieldset>
-
-        {mode === "active" && (
-          <div className="space-y-4 rounded-lg border border-warn/50 bg-warn/5 p-4">
-            <div>
-              <label className="label" htmlFor="scope">Authorized scope</label>
-              <textarea id="scope" className="field min-h-[64px] font-mono" value={scope}
-                onChange={(e) => setScope(e.target.value)}
-                placeholder={"example.com\n198.51.100.0/24"} />
-              <p className="mt-1 text-xs text-muted">
-                One host, domain or CIDR per line. Subdomains of a listed domain are included.
-              </p>
-            </div>
-            <div>
-              <label className="label" htmlFor="auth">Authorization record</label>
-              <textarea id="auth" className="field min-h-[64px]" value={authorization}
-                onChange={(e) => setAuthorization(e.target.value)}
-                placeholder="Who authorized active testing, when, and the reference (e.g. SOW-42 signed by the client's CISO on 30 Oct 2026)." />
-            </div>
-          </div>
-        )}
 
         <div>
           <label className="label" htmlFor="depth">Pivot depth for scans</label>
@@ -148,20 +119,19 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
           <label className="label" htmlFor="costly">Sources with quotas or fees in automatic scans</label>
           <select id="costly" className="field w-auto" value={costly}
             onChange={(e) => setCostly(e.target.value as "none" | "metered" | "all")}>
+            <option value="all">Everything: free, monthly quota (Hunter, Tomba) and paid (DeHashed)</option>
+            <option value="metered">Free and monthly-quota sources (Hunter, Tomba)</option>
             <option value="none">Free sources only</option>
-            <option value="metered">Also monthly-quota sources (Hunter, Tomba)</option>
-            <option value="all">Also paid sources (DeHashed)</option>
           </select>
-          <p className="mt-1 text-xs text-muted">Quotas are shared by everyone on this server and enforced per month.</p>
+          <p className="mt-1 text-xs text-muted">Quotas are shared by everyone on this server and enforced per month. <a className="text-accent-text hover:underline" href="#/sources">See what is left</a>.</p>
         </div>
 
         <ErrorBox error={error} onDismiss={() => setError(null)} />
 
         <div className="flex items-center gap-3">
-          <button type="submit" className="btn btn-primary" disabled={busy || !name.trim() || purposeShort || activeIncomplete}>
+          <button type="submit" className="btn btn-primary" disabled={busy || !name.trim() || purposeShort}>
             {busy ? "Creating…" : "Create investigation"}
           </button>
-          {activeIncomplete && <span className="text-xs text-warn">Active mode needs a scope and an authorization record.</span>}
         </div>
       </form>
     </div>

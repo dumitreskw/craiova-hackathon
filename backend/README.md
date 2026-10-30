@@ -14,7 +14,7 @@ backend/
 │   ├── api/             # REST routers + SSE stream (/api/v1)
 │   ├── models/          # SQLite schema, request schemas
 │   ├── ledger.py        # gate → connector → finding + raw file + audit → resolver
-│   ├── guard.py         # per-investigation scope gate for active connectors
+│   ├── guard.py         # gate: passive/active mode + connector allow/deny lists
 │   ├── resolver/        # dedupe, provenance, confidence, legal-hit candidates
 │   ├── scan/            # quick scan: pivot map, loop detection, caps, off-target rule
 │   ├── report/          # claim model, lint, internal/client render, graph draft
@@ -103,8 +103,7 @@ as `agent.*` events.
 - **Every call goes through the ledger** (`app/ledger.py`): finding row, raw
   JSON file with sha256, audit row, live events — including refused calls.
 - **Active connectors** (`passive=False`) run only when the investigation is
-  `active`, has a recorded authorization, and the host is in *its own* scope.
-  The quick scan doesn't even offer them otherwise.
+  `active`. The quick scan doesn't even offer them otherwise.
 - **Off-target pivots**: discovered domains/emails outside the target's own
   domains (NS, MX, SOA hostmaster…) are recorded but not followed, and the
   report lists them as related third-party assets.
@@ -143,7 +142,7 @@ PYTHONPATH=. uv run python scripts/smoke.py github.com   # live
 | — (app only) | `subfinder`, `urlscan`, `otx_domain`, `otx_ip`, `dnstwist`, `hunter`, `tomba`, `dehashed`, `holehe`, `maigret` | see docs/04 | yes | see `.env.example` |
 
 `http_probe_site` is only registered when `MCP_ALLOW_ACTIVE=1`: the MCP server
-has no investigation scope to check, so the deployed `/mcp` endpoint is
+has no investigation mode to check, so the deployed `/mcp` endpoint is
 passive-only.
 
 ## Notes

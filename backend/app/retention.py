@@ -33,8 +33,7 @@ def purge_investigation(db: Database, settings: Settings, investigation_id: str,
                         user: str, reason: str) -> None:
     for sql in _PURGE_SQL:
         db.conn.execute(sql, (investigation_id,))
-    db.conn.execute("UPDATE investigations SET deleted_at = ?, scope = '[]', "
-                    "authorization = NULL WHERE id = ?", (now(), investigation_id))
+    db.conn.execute("UPDATE investigations SET deleted_at = ? WHERE id = ?", (now(), investigation_id))
     db.conn.commit()
     shutil.rmtree(settings.evidence_dir / investigation_id, ignore_errors=True)
     db.audit(user=user, action="investigation.purge", investigation_id=investigation_id,

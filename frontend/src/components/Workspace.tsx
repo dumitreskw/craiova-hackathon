@@ -1,4 +1,7 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  Activity, Bot, FileText, ListChecks, Network, Plus, RotateCw, ScrollText, X, type LucideIcon,
+} from "lucide-react";
 import { api } from "../api";
 import { ENTITY_TYPES } from "../entityStyle";
 import { useInvestigationStream } from "../stream";
@@ -10,10 +13,19 @@ import { EntityPanel } from "./EntityPanel";
 import { GraphView } from "./GraphView";
 import { ReportsView } from "./ReportsView";
 import { RunsView } from "./RunsView";
-import { Badge, ErrorBox, useLoad } from "./ui";
+import { Badge, ErrorBox, Loading, useLoad } from "./ui";
 
-export type Tab = "graph" | "runs" | "reports" | "audit";
-type Side = "activity" | "entity" | "claude";
+export const TABS = ["graph", "activity", "agents", "runs", "reports", "audit"] as const;
+export type Tab = (typeof TABS)[number];
+
+const TAB_META: Record<Tab, [string, LucideIcon]> = {
+  graph: ["Graph", Network],
+  activity: ["Activity", Activity],
+  agents: ["Claude agents", Bot],
+  runs: ["Runs", ListChecks],
+  reports: ["Reports", FileText],
+  audit: ["Audit log", ScrollText],
+};
 
 const BASIS_LABEL: Record<string, string> = {
   legitimate_interest: "Legitimate interest",
@@ -28,7 +40,6 @@ export function Workspace({ id, tab, onChanged }: { id: string; tab: Tab; onChan
   const [inv, error, , reload] = useLoad(() => api.get<Investigation>(`/investigations/${id}`), [id]);
   const stream = useInvestigationStream(id);
   const [selected, setSelected] = useState<string | null>(null);
-  const [side, setSide] = useState<Side>("activity");
 
   // Keep counts in the header and the sidebar fresh when a run ends.
   useEffect(
@@ -43,43 +54,83 @@ export function Workspace({ id, tab, onChanged }: { id: string; tab: Tab; onChan
     [id],
   );
 
+  // Claude runs in flight, from the live stream: drives the dot on the tab.
+  const agentsRunning = useMemo(() => {
+    const live = new Set<string>();
+    for (const e of stream.events) {
+      const run = String(e.data.run_id ?? "");
+      if (e.event === "agent.started") live.add(run);
+      else if (e.event === "agent.finished" || e.event === "agent.failed" || e.event === "agent.refused") live.delete(run);
+    }
+    return live.size;
+  }, [stream.events]);
+  const problems = useMemo(
+    () => stream.events.filter((e) => e.event === "tool.failed" || e.event === "tool.refused").length,
+    [stream.events],
+  );
+
   function select(entityId: string | null) {
     setSelected(entityId);
-    if (entityId) setSide("entity");
+  }
+
+  function openEntity(entityId: string) {
+    setSelected(entityId);
+    if (tab !== "graph") window.location.hash = `/inv/${id}/graph`;
   }
 
   if (error) return <div className="p-6"><ErrorBox error={error} /></div>;
-  if (!inv) return <div className="p-6 text-muted">Loading investigation…</div>;
+  if (!inv) return <Loading>Opening investigation</Loading>;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="border-b border-line bg-panel px-5 pb-0 pt-3">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h1 className="text-lg font-semibold tracking-tight">{inv.name}</h1>
-          <Badge value={inv.mode} title={inv.mode === "active" ? `Scope: ${inv.scope.join(", ")}` : "Public sources only"} />
-          <span className="text-xs text-muted">{BASIS_LABEL[inv.legal_basis] || inv.legal_basis}</span>
-          <span className="text-xs text-muted">pivot depth {inv.settings?.max_depth ?? 1}</span>
-          <span className="text-xs text-muted">kept {inv.retention_days} days{inv.legal_hold ? ", legal hold" : ""}</span>
-          <span className="ml-auto flex items-center gap-1.5 text-xs text-muted" title="Live updates">
-            <span className={`h-2 w-2 rounded-full ${stream.connected ? "bg-ok" : "bg-danger"}`} />
-            {stream.connected ? "Live" : "Reconnecting"}
+      <header className="border-b border-line bg-panel px-5 pt-3.5">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <h1 className="text-[20px] font-semibold leading-tight tracking-tight">{inv.name}</h1>
+          <Badge value={inv.mode} label={inv.mode === "active" ? "Active allowed" : "Passive only"}
+            title={inv.mode === "active" ? "Active collection" : "Public sources only"} />
+          <span className="text-xs text-muted">
+            {BASIS_LABEL[inv.legal_basis] || inv.legal_basis}, pivot depth {inv.settings?.max_depth ?? 1}, kept{" "}
+            {inv.retention_days} days{inv.legal_hold ? ", legal hold" : ""}
+          </span>
+          <span className="ml-auto flex items-center gap-4 text-xs text-muted">
+            {inv.stats && (
+              <span>
+                <b className="font-semibold text-ink">{inv.stats.entities.toLocaleString()}</b> entities,{" "}
+                <b className="font-semibold text-ink">{inv.stats.edges.toLocaleString()}</b> links,{" "}
+                <b className="font-semibold text-ink">{inv.stats.findings.toLocaleString()}</b> lookups
+              </span>
+            )}
+            <span className="flex items-center gap-1.5" role="status">
+              <span className={`h-2 w-2 rounded-full ${stream.connected ? "bg-ok" : "animate-pulse bg-danger"}`} aria-hidden />
+              {stream.connected ? "Live" : "Reconnecting"}
+            </span>
           </span>
         </div>
-        <p className="mt-1 max-w-[80ch] truncate text-sm text-muted" title={inv.purpose}>{inv.purpose}</p>
+        <p className="mt-1 max-w-[90ch] truncate text-sm text-muted" title={inv.purpose}>{inv.purpose}</p>
         <TargetBar inv={inv} onAdded={() => { reload(); onChanged(); }} />
-        <nav className="mt-2 flex gap-1" aria-label="Investigation views">
-          {(["graph", "runs", "reports", "audit"] as Tab[]).map((t) => (
-            <a key={t} href={`#/inv/${id}/${t}`}
-              className={`border-b-2 px-3 py-2 text-sm capitalize ${
-                tab === t ? "border-accent font-medium text-ink" : "border-transparent text-muted hover:text-ink"}`}>
-              {t}
-            </a>
-          ))}
-          {inv.stats && (
-            <span className="ml-auto self-center text-xs text-muted">
-              {inv.stats.entities} entities, {inv.stats.edges} links, {inv.stats.findings} lookups
-            </span>
-          )}
+        <nav className="-mb-px mt-3 flex gap-1 overflow-x-auto" aria-label="Investigation views">
+          {TABS.map((t) => {
+            const [label, Icon] = TAB_META[t];
+            const current = tab === t;
+            return (
+              <a key={t} href={`#/inv/${id}/${t}`} aria-current={current ? "page" : undefined}
+                className={`flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 text-sm transition-colors duration-150 ${
+                  current ? "border-accent font-semibold text-ink" : "border-transparent text-muted hover:border-line hover:text-ink"}`}>
+                <Icon className="h-4 w-4" aria-hidden />
+                {label}
+                {t === "agents" && agentsRunning > 0 && (
+                  <span className="rounded-full bg-accent px-1.5 text-2xs font-semibold text-accent-ink" title="Claude runs in progress">
+                    {agentsRunning}
+                  </span>
+                )}
+                {t === "activity" && problems > 0 && (
+                  <span className="rounded-full bg-danger/15 px-1.5 text-2xs font-semibold text-danger" title="Failed or blocked lookups">
+                    {problems}
+                  </span>
+                )}
+              </a>
+            );
+          })}
         </nav>
       </header>
 
@@ -89,35 +140,25 @@ export function Workspace({ id, tab, onChanged }: { id: string; tab: Tab; onChan
             <GraphView investigationId={id} seedIds={(inv.targets || []).map((t) => t.entity_id)} stream={stream}
               selected={selected} onSelect={select} />
           </div>
-          <aside className="flex w-[380px] shrink-0 flex-col border-l border-line bg-panel max-lg:w-[320px]">
-            <div className="flex border-b border-line" role="tablist">
-              {([
-                ["activity", "Activity"],
-                ["entity", "Entity"],
-                ["claude", "Claude"],
-              ] as [Side, string][]).map(([key, label]) => (
-                <button key={key} role="tab" aria-selected={side === key} onClick={() => setSide(key)}
-                  className={`flex-1 border-b-2 px-3 py-2 text-sm ${
-                    side === key ? "border-accent font-medium" : "border-transparent text-muted hover:text-ink"}`}>
-                  {label}
+          {selected && (
+            <aside className="flex w-[400px] shrink-0 flex-col border-l border-line bg-panel max-lg:w-[340px]" aria-label="Entity details">
+              <div className="flex items-center justify-between border-b border-line px-4 py-2">
+                <span className="text-sm font-medium text-muted">Entity</span>
+                <button className="icon-btn h-8 w-8" onClick={() => setSelected(null)} aria-label="Close entity panel">
+                  <X className="h-4 w-4" />
                 </button>
-              ))}
-            </div>
-            <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-              {side === "activity" && <ActivityFeed events={stream.events} onSelect={select} />}
-              {side === "entity" &&
-                (selected ? (
-                  <EntityPanel entityId={selected} investigationId={id} onSelect={select} />
-                ) : (
-                  <p className="p-4 text-sm text-muted">Select a node in the graph to see where it came from.</p>
-                ))}
-              {side === "claude" && <AgentsPanel investigation={inv} events={stream.events} />}
-            </div>
-          </aside>
+              </div>
+              <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+                <EntityPanel entityId={selected} investigationId={id} onSelect={select} />
+              </div>
+            </aside>
+          )}
         </div>
       )}
+      {tab === "activity" && <ActivityFeed events={stream.events} onSelect={openEntity} />}
+      {tab === "agents" && <AgentsPanel investigation={inv} stream={stream} />}
       {tab === "runs" && <RunsView investigationId={id} stream={stream} />}
-      {tab === "reports" && <ReportsView investigationId={id} />}
+      {tab === "reports" && <ReportsView investigationId={id} stream={stream} />}
       {tab === "audit" && <AuditView investigationId={id} />}
     </div>
   );
@@ -137,7 +178,7 @@ function TargetBar({ inv, onAdded }: { inv: Investigation; onAdded: () => void }
     try {
       const r = await api.post<{ type: string; key: string; run_id: string | null }>(
         `/investigations/${inv.id}/targets`, { value: value.trim(), type, scan: true });
-      setNotice(`Added ${r.type} ${r.key}; scanning.`);
+      setNotice(`Added ${r.type} ${r.key}. Scanning.`);
       setValue("");
       onAdded();
     } catch (err) {
@@ -157,34 +198,38 @@ function TargetBar({ inv, onAdded }: { inv: Investigation; onAdded: () => void }
     }
   }
 
+  const targets = inv.targets || [];
+
   return (
     <div className="mt-3">
       <form onSubmit={add} className="flex flex-wrap items-center gap-2">
-        <input className="field max-w-md flex-1 font-mono" value={value} onChange={(e) => setValue(e.target.value)}
-          placeholder="example.com, jane@example.com, @handle, RO12345678, Jane Doe" aria-label="Target" />
-        <select className="field w-auto" value={type} onChange={(e) => setType(e.target.value)} aria-label="Target type">
-          <option value="auto">Detect type</option>
-          {ENTITY_TYPES.filter((t) => !["Certificate", "Breach", "Vulnerability", "ASN"].includes(t)).map((t) => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
-        <button className="btn btn-primary" disabled={busy || !value.trim()}>
-          {busy ? "Adding…" : "Add target and scan"}
-        </button>
-        {(inv.targets?.length ?? 0) > 0 && (
-          <button type="button" className="btn" onClick={rescan}>Scan all targets again</button>
-        )}
-        {notice && !error && <span className="text-xs text-muted">{notice}</span>}
-      </form>
-      {(inv.targets?.length ?? 0) > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {inv.targets!.map((t) => (
-            <span key={t.id} className="rounded border border-line bg-ground px-2 py-0.5 text-xs">
-              <span className="text-muted">{t.type}</span> <span className="font-mono">{t.value}</span>
-            </span>
-          ))}
+        <span className="mr-1 text-xs font-medium text-muted">Targets</span>
+        {targets.map((t) => (
+          <span key={t.id} className="inline-flex items-center gap-1.5 rounded-md border border-accent/40 bg-accent/10 px-2 py-1 text-xs">
+            <span className="text-muted">{t.type}</span>
+            <span className="font-mono text-[13px] text-ink">{t.value}</span>
+          </span>
+        ))}
+        <div className="flex min-w-[18rem] flex-1 items-center gap-2">
+          <input className="field max-w-sm font-mono" value={value} onChange={(e) => setValue(e.target.value)}
+            placeholder="example.com, jane@example.com, @handle" aria-label="New target" />
+          <select className="field w-auto" value={type} onChange={(e) => setType(e.target.value)} aria-label="Target type">
+            <option value="auto">Detect type</option>
+            {ENTITY_TYPES.filter((t) => !["Certificate", "Breach", "Vulnerability", "ASN"].includes(t)).map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+          <button className="btn" disabled={busy || !value.trim()}>
+            <Plus className="h-4 w-4" aria-hidden />{busy ? "Adding" : "Add and scan"}
+          </button>
+          {targets.length > 0 && (
+            <button type="button" className="btn btn-quiet" onClick={rescan} title="Run the quick scan on every target again">
+              <RotateCw className="h-4 w-4" aria-hidden />Scan again
+            </button>
+          )}
         </div>
-      )}
+        {notice && !error && <span className="text-xs text-muted" role="status">{notice}</span>}
+      </form>
       {error ? <div className="mt-2"><ErrorBox error={error} onDismiss={() => setError(null)} /></div> : null}
     </div>
   );

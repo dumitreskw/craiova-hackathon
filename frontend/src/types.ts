@@ -31,8 +31,6 @@ export interface Investigation {
   purpose: string;
   legal_basis: LegalBasis;
   mode: Mode;
-  scope: string[];
-  authorization: string | null;
   settings: InvestigationSettings;
   retention_days: number;
   legal_hold: number;
@@ -126,7 +124,7 @@ export interface Run {
   goal: string | null;
   status: "running" | "finished" | "failed" | "cancelled" | string;
   summary: string | null;
-  stats: Record<string, number>;
+  stats: Record<string, unknown>;
   started_at: string;
   finished_at: string | null;
 }
@@ -210,4 +208,21 @@ export interface StreamEvent {
   event: string;
   data: Record<string, unknown>;
   at: number;
+}
+
+/** GET /credits: one row per paid or metered source. Any number may be null. */
+export interface CreditEntry {
+  source: string;
+  label: string;
+  status: "ok" | "unavailable" | "error";
+  used: number | null;
+  limit: number | null;
+  remaining: number | null;
+  unit: string | null;
+  period: string | null;
+  resets: string | null;
+  note: string | null;
+  dashboard_url: string | null;
+  platform_used_30d?: number | null;
+  checked_at?: string;
 }

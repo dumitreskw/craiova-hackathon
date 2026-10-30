@@ -29,21 +29,15 @@ def test_in_scope_matches_host_parent_domain_and_cidr():
 
 
 def _inv(**over):
-    return {"mode": "passive", "scope": [], "authorization": None, "settings": {}, **over}
+    return {"mode": "passive", "settings": {}, **over}
 
 
-def test_gate_allows_passive_and_refuses_active_without_authorization():
+def test_gate_allows_passive_and_active_in_active_mode():
     guard.check(_inv(), "dns", True, "example.com")
     with pytest.raises(guard.GateError, match="passive"):
         guard.check(_inv(), "http_probe", False, "example.com")
-    with pytest.raises(guard.GateError, match="authorization"):
-        guard.check(_inv(mode="active", scope=["example.com"]), "http_probe", False,
-                    "example.com")
-    with pytest.raises(guard.GateError, match="not in this investigation"):
-        guard.check(_inv(mode="active", scope=["other.com"], authorization="signed SOW"),
-                    "http_probe", False, "example.com")
-    guard.check(_inv(mode="active", scope=["example.com"], authorization="signed SOW"),
-                "http_probe", False, "www.example.com")
+    guard.check(_inv(mode="active"), "http_probe", False, "example.com")
+    guard.check(_inv(mode="active"), "http_probe", False, "www.example.com")
 
 
 def test_gate_honours_connector_allow_and_deny_lists():
@@ -194,9 +188,8 @@ async def test_quick_scan_pivots_and_skips_active_in_passive_mode(platform, make
     assert len(rows) == len({(r["connector"], r["input"]["arg"]) for r in rows})
 
 
-async def test_quick_scan_runs_active_only_in_scope(platform, make_investigation):
-    inv = make_investigation(mode="active", scope=["example.com"], authorization="SOW-1",
-                             settings={"max_depth": 0})
+async def test_quick_scan_runs_active_in_active_mode(platform, make_investigation):
+    inv = make_investigation(mode="active", settings={"max_depth": 0})
     seed = platform.resolver.ensure_entity(inv["id"], EntityType.DOMAIN, "example.com")
     await platform.scan.run("ar_x", inv, [seed], "t")
     assert platform.db.query("SELECT * FROM findings WHERE connector = 'http_probe'")

@@ -62,8 +62,8 @@ def agent_platform(settings, fake_registry):
 
 def make_inv(p, **over):
     inv = {"id": new_id("inv"), "name": "Example SRL", "purpose": "Authorized vendor review",
-           "legal_basis": "legitimate_interest", "mode": "passive", "scope": [],
-           "authorization": None, "settings": {"max_depth": 1}, "retention_days": 90,
+           "legal_basis": "legitimate_interest", "mode": "passive",
+           "settings": {"max_depth": 1}, "retention_days": 90,
            "legal_hold": 0, "created_by": "t", "created_at": now(), **over}
     p.db.insert("investigations", inv)
     return p.db.get("investigations", inv["id"])

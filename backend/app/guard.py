@@ -3,16 +3,10 @@
 Every connector call goes through :func:`check`. Passive connectors are always
 allowed (subject to the investigation's connector allow/deny lists). An
 **active** connector — one that sends traffic to the target's own
-infrastructure — runs only when all of these hold:
+infrastructure — runs only when the investigation is in ``active`` mode.
 
-1. the investigation is in ``active`` mode,
-2. it records who authorized the work (``authorization``), and
-3. the host being touched is in **this investigation's** scope list (the host
-   itself or a parent domain).
-
-The scope is per investigation on purpose. Taking the union of every
-engagement's scope (as the Kali workspace's ``scope.txt`` gate did) lets an
-analyst scan a host for case B because case A authorized it.
+:func:`in_scope` is also used by the quick scan to decide whether a discovered
+domain or email belongs to the target or is a third-party asset (pivot control).
 """
 
 from __future__ import annotations
@@ -73,10 +67,4 @@ def check(investigation: dict[str, Any], connector: str, passive: bool, target: 
     if investigation.get("mode") != "active":
         raise GateError(
             f"'{connector}' is ACTIVE (it contacts the target). The investigation is "
-            "passive; switch it to active mode with a recorded authorization first.")
-    if not (investigation.get("authorization") or "").strip():
-        raise GateError("active mode needs a recorded authorization (who, when, reference)")
-    if not in_scope(target, investigation.get("scope") or []):
-        raise GateError(
-            f"'{host_of(target)}' is not in this investigation's authorized scope; "
-            "add it to the scope (with authorization) before running active connectors")
+            "passive; switch it to active mode first.")

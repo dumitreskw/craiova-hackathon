@@ -285,7 +285,7 @@ def _collection_summary(db: Database, investigation_id: str) -> list[str]:
     lines = [f"{name}: {n} call(s)" + (f", {errors[name]} failed" if errors[name] else "")
              for name, n in sorted(calls.items())]
     active = sum(1 for r in rows if not r["passive"])
-    lines.append(f"active (target-touching) calls: {active}; refused by the scope gate: {refused}")
+    lines.append(f"active (target-touching) calls: {active}; refused by the gate: {refused}")
     return lines
 
 

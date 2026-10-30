@@ -151,8 +151,8 @@ def make_investigation(platform):
 
     def make(**over):
         inv = {"id": new_id("inv"), "name": "Test", "purpose": "Authorized test assessment",
-               "legal_basis": "legitimate_interest", "mode": "passive", "scope": [],
-               "authorization": None, "settings": {"max_depth": 1}, "retention_days": 90,
+               "legal_basis": "legitimate_interest", "mode": "passive",
+               "settings": {"max_depth": 1}, "retention_days": 90,
                "legal_hold": 0, "created_by": "tester", "created_at": now(), **over}
         platform.db.insert("investigations", inv)
         return platform.db.get("investigations", inv["id"])
