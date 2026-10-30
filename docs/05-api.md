@@ -134,7 +134,11 @@ GET    /investigations/{id}/reports    list
 GET    /reports/{rid}                  report body (claims + evidence ids)
 PUT    /reports/{rid}                  { body } → returns lint
 GET    /reports/{rid}/lint?audience=internal|client
-GET    /reports/{rid}/render?audience=internal|client&format=md|html&cite=true
+GET    /reports/{rid}/render?audience=internal|client&format=md|html|docx|pdf&cite=true
+                                       docx: house layout (A4, Arial, header/footer from
+                                       OSINT_REPORT_HEADER / OSINT_REPORT_FOOTER, screenshots embedded)
+                                       pdf: the HTML render printed by headless Chromium
+                                       docx/pdf come as attachments: <title>_<audience>_<date>.<ext>
                                        409 on lint errors unless &force=true (audited)
 ```
 

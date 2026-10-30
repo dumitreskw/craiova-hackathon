@@ -93,13 +93,18 @@ function ReportDetail({ reportId }: { reportId: string }) {
   for (const i of issues) if (i.claim) byClaim.set(i.claim, [...(byClaim.get(i.claim) || []), i]);
   const general = issues.filter((i) => !i.claim);
 
-  async function exportAs(format: "md" | "html", force = false) {
+  const [exporting, setExporting] = useState<ExportFormat | null>(null);
+
+  async function exportAs(format: ExportFormat, force = false) {
     setExportError(null);
+    setExporting(format);
     try {
       await download(`/reports/${reportId}/render${qs({ audience, format, cite, force: force || undefined })}`,
         `${report!.title.replace(/[^\w.-]+/g, "_").slice(0, 60)}_${audience}.${format}`);
     } catch (e) {
       setExportError(e);
+    } finally {
+      setExporting(null);
     }
   }
 
@@ -130,8 +135,12 @@ function ReportDetail({ reportId }: { reportId: string }) {
             </button>
           ))}
         </div>
-        <button className="btn px-2.5 py-1 text-xs" onClick={() => exportAs("md")}>Export Markdown</button>
-        <button className="btn px-2.5 py-1 text-xs" onClick={() => exportAs("html")}>Export HTML</button>
+        {EXPORT_FORMATS.map(([format, label]) => (
+          <button key={format} className="btn px-2.5 py-1 text-xs" disabled={exporting !== null}
+            onClick={() => exportAs(format)}>
+            {exporting === format ? "Preparing…" : `Export ${label}`}
+          </button>
+        ))}
       </div>
 
       <div className={`border-b px-5 py-2 text-sm ${errors.length ? "border-danger/40 bg-danger/5" : "border-line"}`}>
@@ -175,7 +184,10 @@ function ReportDetail({ reportId }: { reportId: string }) {
   );
 }
 
-function LintBlocked({ error, onForce }: { error: unknown; onForce: (format: "md" | "html") => void }) {
+type ExportFormat = "docx" | "pdf" | "html" | "md";
+const EXPORT_FORMATS: [ExportFormat, string][] = [["docx", "Word"], ["pdf", "PDF"], ["html", "HTML"], ["md", "Markdown"]];
+
+function LintBlocked({ error, onForce }: { error: unknown; onForce: (format: ExportFormat) => void }) {
   if (error instanceof ApiError && error.status === 409) {
     const issues = ((error.detail as { issues?: LintIssue[] })?.issues || []) as LintIssue[];
     return (
@@ -186,9 +198,12 @@ function LintBlocked({ error, onForce }: { error: unknown; onForce: (format: "md
             <li key={n}>{i.claim ? <Mono>{i.claim}</Mono> : null} {i.message}</li>
           ))}
         </ul>
-        <div className="mt-2 flex gap-2">
-          <button className="btn btn-danger px-2.5 py-1 text-xs" onClick={() => onForce("md")}>Export Markdown anyway</button>
-          <button className="btn btn-danger px-2.5 py-1 text-xs" onClick={() => onForce("html")}>Export HTML anyway</button>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {EXPORT_FORMATS.map(([format, label]) => (
+            <button key={format} className="btn btn-danger px-2.5 py-1 text-xs" onClick={() => onForce(format)}>
+              {label} anyway
+            </button>
+          ))}
         </div>
       </div>
     );

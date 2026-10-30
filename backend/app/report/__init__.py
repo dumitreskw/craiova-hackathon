@@ -205,7 +205,19 @@ def _screenshot(db: Database, finding: dict, evidence_dir: Path | None) -> Path 
 def render(db: Database, investigation: dict, body: dict, audience: str = "internal",
            fmt: str = "md", cite: bool = True, evidence_dir: Path | None = None) -> str:
     """Render a report. With ``evidence_dir``, HTML embeds screenshot evidence
-    inline (data URIs), so the exported file stands alone."""
+    inline (data URIs), so the exported file stands alone. DOCX and PDF are in
+    ``app.report.export`` and use the same blocks."""
+    blocks = build_blocks(db, investigation, body, audience, cite, evidence_dir)
+    return _to_html(blocks) if fmt == "html" else _to_md(blocks)
+
+
+def build_blocks(db: Database, investigation: dict, body: dict, audience: str = "internal",
+                 cite: bool = True, evidence_dir: Path | None = None) -> list[tuple[str, Any]]:
+    """The audience-specific report as a list of ``(kind, value)`` blocks.
+
+    Every output format serializes these, so what each audience sees is
+    decided in one place. Kinds: h1, meta, h2, p, claims, ul, evidence.
+    """
     if audience not in AUDIENCES:
         raise ValueError(f"audience must be one of {sorted(AUDIENCES)}")
     numbers = _evidence_numbers(body)
@@ -260,7 +272,7 @@ def render(db: Database, investigation: dict, body: dict, audience: str = "inter
                    ("p", body.get("method") or ""),
                    ("ul", _collection_summary(db, investigation["id"]))]
 
-    return _to_html(blocks) if fmt == "html" else _to_md(blocks)
+    return blocks
 
 
 def _collection_summary(db: Database, investigation_id: str) -> list[str]:
