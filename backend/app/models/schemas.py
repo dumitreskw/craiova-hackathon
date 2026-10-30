@@ -98,3 +98,22 @@ class ReportCreate(BaseModel):
 
 class ReportUpdate(BaseModel):
     body: dict[str, Any]
+
+
+class CollectRequest(BaseModel):
+    goal: str = Field(min_length=5, max_length=2000,
+                      description='e.g. "Map the attack surface and who is behind it"')
+    target: str | None = Field(None, max_length=500,
+                               description="added as a target first if it isn't one")
+    max_tool_calls: int = Field(40, ge=1, le=150)
+
+
+class ReportAgentRequest(BaseModel):
+    goal: str = Field(min_length=5, max_length=2000)
+    max_tool_calls: int = Field(25, ge=0, le=100,
+                                description="evidence captures it may take")
+
+
+class CaptureRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=2000)
+    entity_id: str | None = None

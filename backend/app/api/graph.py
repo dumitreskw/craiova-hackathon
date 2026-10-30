@@ -46,8 +46,15 @@ async def get_entity(entity_id: str, p: Platform = Depends(get_platform)):
         "SELECT f.id, f.connector, f.input, f.fetched_at, f.sha256, es.reliability, "
         "es.match_quality FROM entity_sources es JOIN findings f ON f.id = es.finding_id "
         "WHERE es.entity_id = ? ORDER BY f.fetched_at", (entity_id,))
-    edges = [edge_view(r) for r in p.db.query(
-        "SELECT * FROM edges WHERE from_id = ? OR to_id = ?", (entity_id, entity_id))]
+    edges = []
+    for r in p.db.query("SELECT * FROM edges WHERE from_id = ? OR to_id = ?",
+                        (entity_id, entity_id)):
+        other_id = r["to_id"] if r["from_id"] == entity_id else r["from_id"]
+        other = p.db.get("entities", other_id)
+        edges.append({**edge_view(r),
+                      "direction": "out" if r["from_id"] == entity_id else "in",
+                      "other": {k: v for k, v in entity_view(other).items()
+                                if k in ("id", "type", "key", "label", "status")}})
     notes = p.db.query("SELECT * FROM notes WHERE entity_id = ? ORDER BY created_at",
                        (entity_id,))
     return {**entity_view(row), "attribute_sources": row["attributes"], "sources": sources,

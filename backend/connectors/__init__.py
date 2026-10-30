@@ -23,6 +23,7 @@ from .interpol import interpol_notices
 from .national_wanted import national_wanted
 from .rdap import rdap_domain
 from .sanctions import sanctions
+from .screenshot import screenshot
 
 Connector = Callable[..., Awaitable[ConnectorResult]]
 
@@ -67,6 +68,10 @@ REGISTRY: dict[str, ConnectorSpec] = {
         ConnectorSpec("national_wanted", national_wanted, EntityType.PERSON, True,
                       "National police wanted lists (FBI live; RO/BE/NL wired) "
                       "(unverified matches)."),
+        # Fetches the URL's host. The app refuses the target's own hosts unless
+        # the investigation is active and in scope (app/evidence.py).
+        ConnectorSpec("screenshot", screenshot, EntityType.URL, True,
+                      "Render a URL in headless Chromium as banner-stamped PNG evidence."),
     ]
 }
 
@@ -96,4 +101,5 @@ __all__ = [
     "europol_wanted",
     "sanctions",
     "national_wanted",
+    "screenshot",
 ]

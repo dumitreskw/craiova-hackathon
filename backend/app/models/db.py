@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS findings (
     raw_path         TEXT,
     note             TEXT,
     error            TEXT,
-    entity_count     INTEGER NOT NULL DEFAULT 0
+    entity_count     INTEGER NOT NULL DEFAULT 0,
+    egress           TEXT                                 -- where the request left from (OSINT_EGRESS_LABEL)
 );
 
 CREATE TABLE IF NOT EXISTS entities (
@@ -120,6 +121,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     status           TEXT NOT NULL,                       -- running | finished | failed | cancelled
     summary          TEXT,
     stats            TEXT NOT NULL DEFAULT '{}',
+    transcript       TEXT NOT NULL DEFAULT '[]',          -- agents: text, tool calls, results
     started_at       TEXT NOT NULL,
     finished_at      TEXT
 );
@@ -158,7 +160,15 @@ CREATE INDEX IF NOT EXISTS ix_edges_inv ON edges(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_audit_inv ON audit(investigation_id, ts);
 """
 
-JSON_COLUMNS = {"scope", "settings", "input", "attributes", "stats", "body", "detail"}
+JSON_COLUMNS = {"scope", "settings", "input", "attributes", "stats", "body", "detail",
+                "transcript"}
+
+# Columns added after the first release: (table, column, DDL). Applied on open,
+# so an existing database file keeps working.
+MIGRATIONS = [
+    ("findings", "egress", "TEXT"),
+    ("agent_runs", "transcript", "TEXT NOT NULL DEFAULT '[]'"),
+]
 
 
 def now() -> str:
@@ -188,6 +198,11 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
+        for table, column, ddl in MIGRATIONS:
+            cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()

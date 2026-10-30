@@ -11,9 +11,9 @@ Run locally:
     uv run python mcp_server.py            # streamable HTTP on :8787
     uv run mcp dev mcp_server.py           # MCP Inspector
 
-Each tool marks itself passive or active in its description. The backend only
-offers active tools (e.g. http_probe) to an agent when the investigation is in
-active mode — the server itself does not enforce that; it is a tool provider.
+Each tool marks itself passive or active in its description. The server has
+no notion of an investigation's scope, so the active tool (http_probe) is only
+registered when MCP_ALLOW_ACTIVE=1; the app enforces scope for its own agents.
 """
 
 from __future__ import annotations
@@ -70,7 +70,6 @@ async def crtsh_subdomains_tool(domain: str) -> dict[str, Any]:
     return (await crtsh_subdomains(domain)).to_dict()
 
 
-@mcp.tool()
 async def http_probe_site(domain: str) -> dict[str, Any]:
     """Fetch a website's front page and extract title, tech stack, emails, and social links.
 
@@ -78,6 +77,13 @@ async def http_probe_site(domain: str) -> dict[str, Any]:
     the investigation permits active collection. Input: a domain or full URL.
     """
     return (await http_probe(domain)).to_dict()
+
+
+# The MCP server has no investigation scope to check, so the one ACTIVE tool is
+# only exposed when explicitly enabled (local use). The deployed server
+# (docker-compose, reachable at /mcp) stays passive-only.
+if os.environ.get("MCP_ALLOW_ACTIVE") == "1":
+    mcp.tool()(http_probe_site)
 
 
 @mcp.tool()

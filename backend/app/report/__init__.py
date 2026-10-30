@@ -30,9 +30,11 @@ source and retrieval date, and no workspace plumbing.
 
 from __future__ import annotations
 
+import base64
 import html
 import re
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 from ..models import Database, now
@@ -52,6 +54,7 @@ SOURCE_NAMES = {
     "dork_search": "Public web search", "interpol": "INTERPOL public notices",
     "europol": "EU Most Wanted (ENFAST)", "sanctions": "OpenSanctions",
     "national_wanted": "National police wanted lists",
+    "screenshot": "Page capture",
 }
 
 STATUS_LABEL = {
@@ -187,8 +190,22 @@ def _evidence_rows(db: Database, numbers: dict[str, int]) -> list[dict]:
     return rows
 
 
+def _screenshot(db: Database, finding: dict, evidence_dir: Path | None) -> Path | None:
+    """The PNG behind a screenshot finding, if it is on disk."""
+    if finding["connector"] != "screenshot" or evidence_dir is None:
+        return None
+    doc = db.one("SELECT e.attributes FROM entity_sources es JOIN entities e ON "
+                 "e.id = es.entity_id WHERE es.finding_id = ? AND e.type = 'Document'",
+                 (finding["id"],))
+    name = best_attributes(doc["attributes"]).get("file") if doc else None
+    path = evidence_dir / finding["investigation_id"] / "screenshots" / (name or "")
+    return path if name and path.is_file() else None
+
+
 def render(db: Database, investigation: dict, body: dict, audience: str = "internal",
-           fmt: str = "md", cite: bool = True) -> str:
+           fmt: str = "md", cite: bool = True, evidence_dir: Path | None = None) -> str:
+    """Render a report. With ``evidence_dir``, HTML embeds screenshot evidence
+    inline (data URIs), so the exported file stands alone."""
     if audience not in AUDIENCES:
         raise ValueError(f"audience must be one of {sorted(AUDIENCES)}")
     numbers = _evidence_numbers(body)
@@ -230,12 +247,13 @@ def render(db: Database, investigation: dict, body: dict, audience: str = "inter
         for f in evidence:
             source = SOURCE_NAMES.get(f["connector"], f["connector"])
             arg = (f.get("input") or {}).get("arg", "")
-            line = f"[{f['n']}] {source}: {arg}, retrieved {f['fetched_at'][:10]}"
+            verb = "captured" if f["connector"] == "screenshot" else "retrieved"
+            line = f"[{f['n']}] {source}: {arg}, {verb} {f['fetched_at'][:10]}"
             if internal:
                 line += (f" — finding {f['id']}, sha256 {(f['sha256'] or '')[:16]}…, "
                          f"{f['raw_path']}")
-            lines.append(line)
-        blocks.append(("ol", lines))
+            lines.append((line, _screenshot(db, f, evidence_dir)))
+        blocks.append(("evidence", lines))
 
     if internal:
         blocks += [("h2", "Collection method (internal)"),
@@ -276,8 +294,8 @@ def _to_md(blocks: list[tuple[str, Any]]) -> str:
                 out.append(f"- {text}{cites}")
         elif kind == "ul":
             out += [f"- {line}" for line in val]
-        elif kind == "ol":
-            out += [f"{line}  " for line in val]
+        elif kind == "evidence":
+            out += [f"{line}  " for line, _img in val]
     return "\n".join(out).strip() + "\n"
 
 
@@ -300,14 +318,21 @@ def _to_html(blocks: list[tuple[str, Any]]) -> str:
                 for t, refs in val) + "</ul>")
         elif kind == "ul":
             body.append("<ul>" + "".join(f"<li>{e(x)}</li>" for x in val) + "</ul>")
-        elif kind == "ol":
-            body.append("<ol class=evidence>" + "".join(
-                f'<li id="ev{i}">{e(x)}</li>' for i, x in enumerate(val, 1)) + "</ol>")
+        elif kind == "evidence":
+            items = []
+            for i, (line, img) in enumerate(val, 1):
+                pic = ""
+                if img is not None:
+                    data = base64.b64encode(img.read_bytes()).decode("ascii")
+                    pic = f'<br><img alt="evidence {i}" src="data:image/png;base64,{data}">'
+                items.append(f'<li id="ev{i}">{e(line)}{pic}</li>')
+            body.append("<ol class=evidence>" + "".join(items) + "</ol>")
     title = e(blocks[0][1]) if blocks else "Report"
     return (f"<!doctype html><html><head><meta charset=utf-8><title>{title}</title>"
             "<style>body{font:15px/1.5 system-ui,sans-serif;max-width:52rem;margin:2rem auto;"
             "padding:0 1rem}dt{font-weight:600;float:left;clear:left;width:9rem}"
-            "dd{margin-left:9.5rem}.evidence{font-size:13px;color:#444}</style></head>"
+            "dd{margin-left:9.5rem}.evidence{font-size:13px;color:#444}"
+            ".evidence img{max-width:100%;border:1px solid #ccc;margin:.4rem 0 1rem}</style></head>"
             f"<body>{''.join(body)}</body></html>")
 
 

@@ -8,6 +8,7 @@ timeouts are consistent.
 from __future__ import annotations
 
 import asyncio
+import os
 import random
 from typing import Awaitable, Callable, TypeVar
 
@@ -50,7 +51,10 @@ _client: httpx.AsyncClient | None = None
 def get_client() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
+        # OSINT_HTTP_PROXY routes collection through a chosen egress (VPN exit,
+        # proxy in the target's country) instead of the server's own IP.
         _client = httpx.AsyncClient(
+            proxy=os.environ.get("OSINT_HTTP_PROXY") or None,
             headers={"User-Agent": USER_AGENT},
             timeout=httpx.Timeout(15.0, connect=8.0),
             follow_redirects=True,

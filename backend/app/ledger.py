@@ -38,6 +38,7 @@ class RunOutcome:
     fold: FoldResult | None
     error: str | None = None
     refused: bool = False
+    result: ConnectorResult | None = None
 
 
 class Ledger:
@@ -98,6 +99,7 @@ class Ledger:
             "duration_ms": duration_ms, "sha256": sha, "raw_path": raw_path,
             "note": result.note if result else None, "error": error,
             "entity_count": len(result.entities) if result else 0,
+            "egress": self.settings.egress_label,
         })
         self.db.audit(user=user, action="connector.call",
                       outcome="error" if error else "ok", investigation_id=inv_id,
@@ -118,4 +120,4 @@ class Ledger:
         self.bus.publish(inv_id, "tool.finished", {
             "connector": connector, "finding_id": finding_id, "found": len(result.entities),
             "new_entities": len(fold.new_entities), "note": result.note})
-        return RunOutcome(finding_id, fold)
+        return RunOutcome(finding_id, fold, result=result)

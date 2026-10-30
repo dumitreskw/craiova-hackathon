@@ -18,6 +18,7 @@ from ..models.schemas import (
     _check_active,
 )
 from ..platform import Platform
+from ..resolver import entity_view
 from ..retention import purge_investigation
 from .deps import current_user, get_platform, load_investigation
 
@@ -116,6 +117,8 @@ async def add_target(investigation_id: str, body: TargetCreate,
                             "added_by": user, "created_at": now()})
     p.db.audit(user=user, action="target.add", investigation_id=investigation_id,
                target=key, detail={"type": etype.value})
+    p.bus.publish(investigation_id, "entity.created",
+                  {"entity": entity_view(p.db.get("entities", entity_id))})
     run_id = None
     if body.scan:
         run_id = p.scan.start(inv, [entity_id], user, max_depth=body.max_depth)
@@ -156,7 +159,7 @@ async def cancel_run(run_id: str, p: Platform = Depends(get_platform),
     run = p.db.get("agent_runs", run_id)
     if run is None:
         raise HTTPException(404, "run not found")
-    cancelled = p.scan.cancel(run_id)
+    cancelled = p.scan.cancel(run_id) or p.agents.cancel(run_id)
     p.db.audit(user=user, action="run.cancel", investigation_id=run["investigation_id"],
                detail={"run_id": run_id, "was_running": cancelled})
     return {"cancelled": cancelled}

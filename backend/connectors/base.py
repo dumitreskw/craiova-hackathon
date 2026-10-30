@@ -61,6 +61,7 @@ SOURCE_RELIABILITY: dict[str, float] = {
     "europol": 0.9,
     "sanctions": 0.9,
     "national_wanted": 0.9,
+    "screenshot": 0.95,
 }
 
 

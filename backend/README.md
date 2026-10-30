@@ -18,6 +18,8 @@ backend/
 │   ├── resolver/        # dedupe, provenance, confidence, legal-hit candidates
 │   ├── scan/            # quick scan: pivot map, loop detection, caps, off-target rule
 │   ├── report/          # claim model, lint, internal/client render, graph draft
+│   ├── agent/           # Claude collection + report agents (tool-use loop, tools, prompts)
+│   ├── evidence.py      # screenshot capture with the target-host rule
 │   ├── retention.py     # expiry + purge (audit kept)
 │   └── detect.py        # seed type auto-detection
 ├── connectors/          # one module per source; shared by the server and the app
@@ -38,7 +40,8 @@ backend/
 Needs Python 3.12 (managed by [uv](https://docs.astral.sh/uv/)).
 
 ```bash
-uv sync                      # create venv, install deps
+uv sync --extra evidence     # create venv, install deps (+ Playwright for screenshots)
+uv run playwright install chromium
 cp .env.example .env         # optional: add API keys
 ```
 
@@ -59,7 +62,11 @@ MCP_PORT=8799 PYTHONPATH=. uv run python scripts/mcp_client_check.py   # termina
 
 App data (SQLite + evidence files) goes to `backend/data/` (git-ignored);
 override with `OSINT_DATA_DIR`. Other knobs: `OSINT_RETENTION_DAYS` (90),
-`OSINT_MAX_CALLS_PER_SCAN` (60), `OSINT_MAX_PIVOTS_PER_TYPE` (10).
+`OSINT_MAX_CALLS_PER_SCAN` (60), `OSINT_MAX_PIVOTS_PER_TYPE` (10),
+`OSINT_HTTP_PROXY` / `OSINT_EGRESS_LABEL` (collection egress),
+`ANTHROPIC_API_KEY`, `OSINT_AGENT_MODEL` (`claude-opus-5-5`),
+`OSINT_AGENT_PROGRESS_UPDATES` (1). If `../frontend/dist` exists it is served
+at `/`.
 
 Try it:
 
@@ -72,6 +79,24 @@ curl -s "$B/investigations/$INV/graph?min_confidence=0.5" | jq '.nodes | length'
 RID=$(curl -s -X POST $B/investigations/$INV/reports -H 'content-type: application/json' -d '{}' | jq -r .id)
 curl -s "$B/reports/$RID/render?audience=client"          # Markdown; &format=html for HTML
 ```
+
+## Claude agents
+
+`POST /investigations/{id}/collect` and `/report-agent` start the agents
+(`app/agent/`). The backend runs the tool-use loop itself (streamed, adaptive
+thinking, `fallbacks: "default"` for classifier declines, prompt-cached
+prefix), so every tool call goes through the ledger and is streamed to the UI
+as `agent.*` events.
+
+- **Collection agent** (`effort: medium`): the connectors as tools, plus
+  `graph_overview` / `get_entity`. Screening tools only run on the
+  investigation's own targets; a tool budget caps lookups.
+- **Report agent** (`effort: high`): read-only graph tools,
+  `capture_evidence`, and `submit_report`, which lints the draft and returns
+  the issues; the agent resubmits until it is clean. The run fails if no clean
+  report was submitted.
+- Without `ANTHROPIC_API_KEY` the endpoints return 503; quick scan and the
+  graph draft report still work.
 
 ## How the app keeps collection honest
 
@@ -113,6 +138,11 @@ PYTHONPATH=. uv run python scripts/smoke.py github.com   # live
 | `eu_most_wanted` | `europol` | person name | yes | — |
 | `sanctions_screen` | `sanctions` | name | yes | `OPENSANCTIONS_API_KEY` |
 | `national_wanted_lists` | `national_wanted` | person name | yes | — |
+| — (app only) | `screenshot` | URL | fetches the URL's host | Playwright + Chromium |
+
+`http_probe_site` is only registered when `MCP_ALLOW_ACTIVE=1`: the MCP server
+has no investigation scope to check, so the deployed `/mcp` endpoint is
+passive-only.
 
 ## Notes
 

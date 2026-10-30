@@ -18,6 +18,13 @@ class Settings:
     max_calls_per_scan: int
     # How many new entities of one type a single pivot round may expand.
     max_pivots_per_type: int
+    # Free-text label for where collection traffic leaves from (VPS region,
+    # VPN exit...), recorded on every finding. See OSINT_HTTP_PROXY in
+    # connectors/_http.py for routing it.
+    egress_label: str | None = None
+    # Claude agents.
+    agent_model: str = "claude-opus-5-5"
+    agent_progress_updates: bool = True
 
     @property
     def db_path(self) -> Path:
@@ -34,4 +41,7 @@ def load_settings() -> Settings:
         retention_days=int(os.environ.get("OSINT_RETENTION_DAYS", "90")),
         max_calls_per_scan=int(os.environ.get("OSINT_MAX_CALLS_PER_SCAN", "60")),
         max_pivots_per_type=int(os.environ.get("OSINT_MAX_PIVOTS_PER_TYPE", "10")),
+        egress_label=os.environ.get("OSINT_EGRESS_LABEL") or None,
+        agent_model=os.environ.get("OSINT_AGENT_MODEL", "claude-opus-5-5"),
+        agent_progress_updates=os.environ.get("OSINT_AGENT_PROGRESS_UPDATES", "1") != "0",
     )

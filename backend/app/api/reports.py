@@ -86,7 +86,8 @@ async def render_report(report_id: str, audience: Audience = "internal",
     p.db.audit(user=user, action="report.render", investigation_id=inv["id"],
                outcome="ok", detail={"report_id": report_id, "audience": audience,
                                      "forced_past_errors": len(errors) if force else 0})
-    out = rep.render(p.db, inv, r["body"], audience=audience, fmt=format, cite=cite)
+    out = rep.render(p.db, inv, r["body"], audience=audience, fmt=format, cite=cite,
+                     evidence_dir=p.settings.evidence_dir)
     if format == "html":
         return HTMLResponse(out)
     return PlainTextResponse(out, media_type="text/markdown")

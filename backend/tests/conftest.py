@@ -94,6 +94,23 @@ async def fake_europol(name: str) -> ConnectorResult:
     return ConnectorResult(source="europol", passive=True, raw={"total": 0})
 
 
+async def fake_screenshot(url: str, out_dir: str | None = None) -> ConnectorResult:
+    from pathlib import Path
+    digest = "ab" * 32
+    if out_dir:
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        (Path(out_dir) / f"{digest[:20]}.png").write_bytes(b"PNG fake")
+    return ConnectorResult(
+        source="screenshot", passive=True,
+        raw={"url": url, "final_url": url, "http_status": 200, "title": "Page",
+             "file": f"{digest[:20]}.png", "sha256": digest, "blocked": False},
+        entities=[EntityCandidate(URL, url, {"title": "Page"}),
+                  EntityCandidate(EntityType.DOCUMENT, digest,
+                                  {"kind": "screenshot", "file": f"{digest[:20]}.png"})],
+        relationships=[RelationshipCandidate("captured_as", URL, url, EntityType.DOCUMENT,
+                                             digest)])
+
+
 async def fake_broken(domain: str) -> ConnectorResult:
     raise RuntimeError("upstream exploded")
 
@@ -103,6 +120,7 @@ FAKES = {
     "http_probe": (fake_http_probe, D, False), "gravatar": (fake_gravatar, EMAIL, True),
     "github_user": (fake_github, USER, True), "dork_search": (fake_dork, PERSON, True),
     "interpol": (fake_interpol, PERSON, True), "europol": (fake_europol, PERSON, True),
+    "screenshot": (fake_screenshot, URL, True),
 }
 
 
