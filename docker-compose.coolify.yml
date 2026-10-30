@@ -6,27 +6,30 @@
 #   Domain for the "gateway" service: https://osint.<your-domain>
 #   Environment: paste the variables from .env.example (secrets marked secret).
 #
-# Differences from docker-compose.yml: no published ports, and the internal
-# Caddy ("gateway") speaks plain HTTP behind Coolify's proxy while still doing
-# the basic-auth login, the X-Analyst audit identity, /mcp routing and SSE.
+# Differences from docker-compose.yml: no published ports, configs baked into
+# images (no bind mounts), and the internal Caddy ("gateway") speaks plain
+# HTTP behind Coolify's proxy while still doing the basic-auth login, the
+# X-Analyst audit identity, /mcp routing and SSE. OSINT_BASIC_AUTH_HASH may be
+# base64-encoded (no "$" for the env file to mangle).
 
 services:
   gateway:
-    image: caddy:2.8.4
+    # Config baked into the image: Coolify runs the stack without the repo
+    # checkout, so bind-mounting repo files would mount empty directories.
+    build:
+      context: .
+      dockerfile: docker/gateway.Dockerfile
     restart: unless-stopped
     expose:
       - "80"
     environment:
       OSINT_BASIC_AUTH_USER: ${OSINT_BASIC_AUTH_USER:?set OSINT_BASIC_AUTH_USER}
       OSINT_BASIC_AUTH_HASH: ${OSINT_BASIC_AUTH_HASH:?set OSINT_BASIC_AUTH_HASH}
-    volumes:
-      - ./Caddyfile.coolify:/etc/caddy/Caddyfile:ro
     depends_on:
       - app
 
   app:
     build: .
-    image: osint-platform:latest
     restart: unless-stopped
     expose:
       - "8000"
@@ -62,20 +65,20 @@ services:
       - searxng
 
   searxng:
-    image: searxng/searxng:2026.10.30-ffa88e3ba
+    build:
+      context: .
+      dockerfile: docker/searxng.Dockerfile
     restart: unless-stopped
     expose:
       - "8080"
     environment:
       SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET}
       SEARXNG_BASE_URL: http://searxng:8080/
-    volumes:
-      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
     cap_drop: ["ALL"]
     cap_add: ["CHOWN", "SETGID", "SETUID"]
 
   mcp:
-    image: osint-platform:latest
+    build: .   # same Dockerfile as app; layers come from the build cache
     restart: unless-stopped
     command: ["python", "mcp_server.py"]
     expose:
