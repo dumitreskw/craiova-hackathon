@@ -168,9 +168,21 @@ async def gleif(name_or_lei: str) -> ConnectorResult:
         r.raise_for_status()
         return r.json()
 
+    ident = re.match(r"^(RO|GB)\s*([0-9A-Z]+)$", q.upper().replace(" ", ""))
     if _LEI.match(q.upper()):
         data = await retry(lambda: fetch(f"{GLEIF_API}/lei-records/{q.upper()}"))
         records = [data["data"]] if data.get("data") else []
+    elif ident:
+        # A national identifier (RO CUI / UK company number): match on the local
+        # registration number instead of the name.
+        juris, number = ident.groups()
+        data = await retry(lambda: fetch(f"{GLEIF_API}/lei-records", {
+            "filter[entity.registeredAs]": number, "filter[entity.jurisdiction]": juris,
+            "page[size]": 5}))
+        records = data.get("data") or []
+        if not records:
+            return ConnectorResult(source="gleif", passive=True, raw={"query": q, "records": []},
+                                   note=f"no LEI registered for {juris} {number}")
     else:
         data = await retry(lambda: fetch(f"{GLEIF_API}/lei-records", {
             "filter[entity.legalName]": q, "page[size]": 5}))

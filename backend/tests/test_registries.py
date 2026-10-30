@@ -257,3 +257,16 @@ async def test_firecrawl_only_after_cheaper_backends_fail(monkeypatch):
         403, text="<html><title>Just a moment...</title></html>"))
     r = await web_read("https://walled.example/")
     assert r.raw["backend"] == "firecrawl" and fc.called
+
+
+@respx.mock
+async def test_gleif_by_national_identifier():
+    route = respx.get("https://api.gleif.org/api/v1/lei-records").mock(
+        return_value=httpx.Response(200, json=GLEIF_REC))
+    respx.get("https://api.gleif.org/api/v1/lei-records/315700V12MDD9PTKU295/ultimate-parent").mock(
+        return_value=httpx.Response(404))
+    r = await gleif("RO14399840")
+    params = dict(route.calls[0].request.url.params)
+    assert params["filter[entity.registeredAs]"] == "14399840"
+    assert params["filter[entity.jurisdiction]"] == "RO"
+    assert "RO14399840" in keys(r, ORG)

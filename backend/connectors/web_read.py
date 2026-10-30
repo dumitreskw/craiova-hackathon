@@ -217,8 +217,10 @@ def _result(url: str, page: dict, errors: dict) -> ConnectorResult:
         entities.append(EntityCandidate(EntityType.EMAIL, e, match_quality=0.8))
         rels.append(RelationshipCandidate("mentions_email", EntityType.URL, url,
                                           EntityType.EMAIL, e))
-    identifiers = sorted({f"RO{m.group(2)}" for m in _RO_CUI.finditer(full_text)}
-                         | {f"GB{m.group(1).upper()}" for m in _UK_NO.finditer(full_text)})
+    # Firecrawl returns markdown without the raw HTML, so look in both.
+    id_text = full_text + "\n" + markdown
+    identifiers = sorted({f"RO{m.group(2)}" for m in _RO_CUI.finditer(id_text)}
+                         | {f"GB{m.group(1).upper()}" for m in _UK_NO.finditer(id_text)})
     for ident in identifiers[:5]:
         entities.append(EntityCandidate(EntityType.ORGANIZATION, ident,
                                         {"identifier_seen_on": final}, match_quality=0.8))
