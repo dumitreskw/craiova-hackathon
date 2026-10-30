@@ -136,6 +136,41 @@ scan stumbles on.
   Lightpanda and then HTTP. Next step: its `map` endpoint for site discovery
   under active mode.
 
+### Page reading pipeline (after benchmarking, Oct 2026)
+
+`web_read` now reads **HTTP first** and escalates to the Lightpanda browser
+only when a page needs JavaScript (thin text, a "please enable JavaScript"
+shell) or HTTP is refused. On server-rendered pages (blogs, Wikipedia,
+registries) plain HTTP gave the same text and metadata as the browser 2-10x
+faster: 0.2-0.6 s vs 0.9-2.2 s.
+
+Every page then goes through the same extraction:
+
+- **selectolax** (lexbor) for links, contacts, JSON-LD and meta tags:
+  15-35x faster than BeautifulSoup on six real pages (1-2 ms vs 14-75 ms),
+  identical results; parsing runs in a worker thread, off the event loop.
+- **trafilatura** for the main text without menus and footers, and the
+  page's own author / publish date / site name (`page_metadata`), so report
+  citations can say who published what and when. On the PSF blog post the
+  agent now reads 3.8k characters of article instead of 30k of page.
+  Contacts are still extracted from the whole page (they live in footers).
+  Page dates are the page's claim (creation, update or publication), not a
+  fact about the subject.
+
+The shared HTTP client uses **HTTP/2** (20 parallel requests to one host:
+88-96 ms vs 169-310 ms on HTTP/1.1) and a User-Agent with a contact URL;
+Wikimedia refuses anonymous bots and returned 403 before.
+
+| Library (from "7 Python scraping libraries", 2026) | Decision | Why |
+|---|---|---|
+| selectolax | **Adopted** | measured 15-35x faster parsing, same output |
+| trafilatura | **Adopted** | main text + author/date for citations, fewer agent tokens |
+| httpx (HTTP/2) | **Adopted** | already our client; HTTP/2 measured 2-3x faster in parallel |
+| curl_cffi | Not adopted | impersonates Chrome's TLS fingerprint to get past bot checks; the platform identifies itself honestly (an honest contactable User-Agent fixed the one 403 we hit) |
+| botasaurus | Not adopted | anti-detection browser; same reason, and heavy |
+| Crawlee | Later | a crawl framework fits active, in-scope site discovery (with katana on Kali as the alternative), not passive collection |
+| price-parser | Not relevant | prices are not an OSINT signal here |
+
 ## Pivot map (which entity triggers which connectors)
 
 ```text

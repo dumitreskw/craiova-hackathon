@@ -106,18 +106,51 @@ async def test_web_read_prefers_firecrawl_and_falls_back(monkeypatch):
     assert r.raw["backend"] == "http" and "firecrawl" in r.raw["backend_errors"]
 
 
-async def test_web_read_uses_lightpanda_when_available(monkeypatch):
+ARTICLE = ("<html><head><title>Board news</title><meta name='author' content='Jane Doe'>"
+           "<meta property='article:published_time' content='2026-09-17'></head><body>"
+           "<nav>Home | About | Blog</nav><article><h1>Board news</h1>"
+           + "".join(f"<p>Paragraph {i}: the foundation's board met on day {i} and reviewed "
+                     f"item {i * 7} of its agenda, covering grants, events and audits.</p>"
+                     for i in range(1, 25))
+           + "</article><footer>Contact board@example.org</footer></body></html>")
+JS_SHELL = ("<html><head><title>App</title></head><body><noscript>You need to enable "
+            "JavaScript to run this app.</noscript><div id='root'></div></body></html>")
+
+
+@respx.mock
+async def test_web_read_http_first_for_server_rendered_pages(monkeypatch):
+    monkeypatch.setenv("OSINT_LIGHTPANDA_CMD", "lightpanda")
+    calls = []
+
+    async def fake_run(tool, args, timeout=0, env=None):
+        calls.append(args)
+        return 0, PAGE, ""
+
+    monkeypatch.setattr(_cli, "run", fake_run)
+    respx.get("https://example.org/news").mock(return_value=httpx.Response(200, text=ARTICLE))
+    r = await web_read("https://example.org/news")
+    assert r.raw["backend"] == "http" and not calls          # no browser needed
+    assert r.raw["text_source"] == "main_content"
+    assert "Home | About" not in r.raw["markdown"]          # boilerplate stripped
+    assert r.raw["page_metadata"]["author"] == "Jane Doe"
+    assert "board@example.org" in r.raw["emails"]            # footer contacts still found
+
+
+@respx.mock
+async def test_web_read_escalates_to_lightpanda_for_js_pages(monkeypatch):
     monkeypatch.setenv("OSINT_LIGHTPANDA_CMD", "lightpanda")
     calls = []
 
     async def fake_run(tool, args, timeout=0, env=None):
         calls.append(args[2])
-        return 0, (PAGE if args[2] == "html" else "# Example\noffice@example.ro"), ""
+        return 0, PAGE, ""
 
     monkeypatch.setattr(_cli, "run", fake_run)
+    respx.get("https://example.ro/contact").mock(return_value=httpx.Response(200, text=JS_SHELL))
     r = await web_read("https://example.ro/contact")
-    assert r.raw["backend"] == "lightpanda" and sorted(calls) == ["html", "markdown"]
+    assert r.raw["backend"] == "lightpanda" and calls == ["html"]  # one render per page
     assert "office@example.ro" in r.raw["emails"]
+    assert "http" in r.raw["backend_errors"]
 
 
 # --- passive data sources -----------------------------------------------------------------

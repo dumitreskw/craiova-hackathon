@@ -381,7 +381,9 @@ class ToolBox:
         if f["connector"] == "web_read" and isinstance(raw, dict):
             text = raw.get("markdown") or ""
             return json.dumps({**{k: f[k] for k in keep}, "url": raw.get("final_url"),
-                               "title": raw.get("title"), "emails": raw.get("emails"),
+                               "title": raw.get("title"),
+                               "page_metadata": raw.get("page_metadata"),
+                               "emails": raw.get("emails"),
                                "socials": raw.get("socials"),
                                "text": text[:12000] + (" [...]" if len(text) > 12000 else "")},
                               default=str, ensure_ascii=False)
@@ -434,7 +436,8 @@ class ToolBox:
         raw = outcome.result.raw
         text = raw.get("markdown") or ""
         return _dump({"finding_id": outcome.finding_id, "url": raw.get("final_url"),
-                      "title": raw.get("title"), "emails": raw.get("emails"),
+                      "title": raw.get("title"), "page_metadata": raw.get("page_metadata"),
+                      "emails": raw.get("emails"),
                       "socials": raw.get("socials"),
                       "structured_data": raw.get("structured_data"),
                       "text": text[:6000] + (" [...]" if len(text) > 6000 else "")})
