@@ -56,7 +56,9 @@ function headers(extra?: HeadersInit): Headers {
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const init: RequestInit = { method, headers: headers() };
-  if (body !== undefined) {
+  if (body instanceof FormData) {
+    init.body = body; // the browser sets the multipart boundary
+  } else if (body !== undefined) {
     (init.headers as Headers).set("Content-Type", "application/json");
     init.body = JSON.stringify(body);
   }
@@ -81,6 +83,7 @@ export const api = {
   put: <T>(path: string, body: unknown) => request<T>("PUT", path, body),
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
   del: <T>(path: string) => request<T>("DELETE", path),
+  upload: <T>(path: string, form: FormData) => request<T>("POST", path, form),
   text: (path: string) => request<string>("GET", path),
 };
 

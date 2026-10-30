@@ -131,3 +131,12 @@ class DeepRequest(BaseModel):
     max_tool_calls: int = Field(60, ge=6, le=250,
                                 description="lookups shared by all workers")
     costly_connectors: Literal["none", "metered", "all"] = "all"
+
+
+class MaterialText(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1, max_length=200_000)
+
+
+class MaterialLink(BaseModel):
+    url: str = Field(min_length=8, max_length=2000)

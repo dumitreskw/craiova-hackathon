@@ -211,3 +211,31 @@ export interface StreamEvent {
   data: Record<string, unknown>;
   at: number;
 }
+
+export type MaterialKind = "file" | "text" | "link";
+
+/** Analyst-supplied material: a file, note or link, converted to markdown. */
+export interface Material {
+  id: string;
+  investigation_id: string;
+  kind: MaterialKind;
+  name: string;
+  format: string;
+  size_bytes: number;
+  sha256: string | null;
+  chars: number;
+  finding_id: string | null;
+  note: string | null;
+  digest: {
+    outline?: string[];
+    preview?: string;
+    emails?: string[];
+    company_identifiers?: string[];
+    urls?: string[];
+    url?: string;
+  };
+  added_by: string;
+  created_at: string;
+  duplicate?: boolean;
+  markdown?: string;
+}

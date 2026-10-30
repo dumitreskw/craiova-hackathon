@@ -55,6 +55,7 @@ SOURCE_NAMES = {
     "europol": "EU Most Wanted (ENFAST)", "sanctions": "OpenSanctions",
     "national_wanted": "National police wanted lists",
     "screenshot": "Page capture",
+    "analyst_material": "Analyst-supplied material",
 }
 
 STATUS_LABEL = {
@@ -140,6 +141,13 @@ def lint(db: Database, investigation_id: str, body: dict, audience: str = "inter
             issue("error", "legal_assertion",
                   "a wanted/sanctions/court hit is stated as fact; mark it 'unverified' "
                   "or confirm the candidate with a disambiguator first", cid)
+
+        # Supplied files and notes are leads from the analyst or client.
+        if status == "verified" and evidence and all(
+                findings.get(f, {}).get("connector") == "analyst_material" for f in evidence):
+            issue("warning", "supplied_only",
+                  "rests only on analyst-supplied material; cite a public source that "
+                  "confirms it or mark it 'unverified'", cid)
 
         if _CREDENTIAL.search(text):
             issue("error", "credential",
@@ -259,7 +267,8 @@ def build_blocks(db: Database, investigation: dict, body: dict, audience: str = 
         for f in evidence:
             source = SOURCE_NAMES.get(f["connector"], f["connector"])
             arg = (f.get("input") or {}).get("arg", "")
-            verb = "captured" if f["connector"] == "screenshot" else "retrieved"
+            verb = {"screenshot": "captured", "analyst_material": "supplied"}.get(
+                f["connector"], "retrieved")
             line = f"[{f['n']}] {source}: {arg}, {verb} {f['fetched_at'][:10]}"
             if internal:
                 line += (f" — finding {f['id']}, sha256 {(f['sha256'] or '')[:16]}…, "

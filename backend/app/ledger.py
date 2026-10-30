@@ -83,6 +83,20 @@ class Ledger:
             error = f"{type(e).__name__}: {e}"[:500]
         duration_ms = int((time.monotonic() - started) * 1000)
 
+        return self.record(investigation, connector, call, result, error, user=user,
+                           run_by=run_by, entity_id=entity_id, passive=spec.passive,
+                           duration_ms=duration_ms)
+
+    def record(self, investigation: dict[str, Any], connector: str, call: dict[str, Any],
+               result: ConnectorResult | None, error: str | None = None, *, user: str,
+               run_by: str, entity_id: str | None = None, passive: bool = True,
+               duration_ms: int = 0) -> RunOutcome:
+        """Store a result as a finding (payload file, sha256, audit) and fold it.
+
+        :meth:`run` uses it for connector calls; material the analyst supplies
+        (app/materials.py) goes through it too, so it is cited like any lookup.
+        """
+        inv_id = investigation["id"]
         finding_id = new_id("f")
         raw_path = sha = None
         if result is not None:
@@ -97,7 +111,7 @@ class Ledger:
         self.db.insert("findings", {
             "id": finding_id, "investigation_id": inv_id, "connector": connector,
             "input": call, "entity_ref": entity_id, "run_by": run_by,
-            "passive": spec.passive,
+            "passive": passive,
             "fetched_at": result.fetched_at.isoformat(timespec="seconds") if result else now(),
             "duration_ms": duration_ms, "sha256": sha, "raw_path": raw_path,
             "note": result.note if result else None, "error": error,
@@ -106,7 +120,7 @@ class Ledger:
         })
         self.db.audit(user=user, action="connector.call",
                       outcome="error" if error else "ok", investigation_id=inv_id,
-                      connector=connector, target=arg,
+                      connector=connector, target=call.get("arg"),
                       detail={"finding_id": finding_id, "run_by": run_by,
                               "duration_ms": duration_ms})
 

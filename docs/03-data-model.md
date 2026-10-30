@@ -106,4 +106,8 @@ confidence = 1 - Π (1 - reliability(source_i) * match_quality_i)
 - `Target { id, investigation_id, entity_ref, type, added_by }`
 - `Job { id, connector, entity_ref, depth, status, started_at, finished_at, error }`
 - `Note { id, entity_ref, author, body, created_at }`
+- `Material { id, investigation_id, kind (file|text|link), name, format, size_bytes, sha256,
+  chars, file, finding_id, note, digest, added_by, created_at }`: analyst-supplied
+  material; its markdown lives in the finding's payload (`analyst_material`, reliability 0.7,
+  or `web_read` for a link), and its identifiers hang off a `Document` entity.
 - `AuditEvent { id, user, action, entity_ref, connector, timestamp, ip }`

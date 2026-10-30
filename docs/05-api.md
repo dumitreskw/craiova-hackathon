@@ -80,6 +80,34 @@ POST   /entities/{eid}/pivot           run selected connectors on an entity
 { "connectors": ["hibp", "gravatar"], "depth": 1 }
 ```
 
+## Analyst-supplied material
+
+```text
+GET    /investigations/{id}/materials        list (with digest: outline, identifiers, preview)
+POST   /investigations/{id}/materials        multipart, field "files" (repeatable):
+                                             .pdf .docx .md .markdown .txt, 25 MB each
+POST   /investigations/{id}/materials/text   {title, text}  a pasted note
+POST   /investigations/{id}/materials/link   {url}  read now (403 for the target's own host
+                                             unless active + in scope)
+GET    /materials/{mid}                      the material + its markdown
+GET    /materials/{mid}/file                 the original upload
+DELETE /materials/{mid}                      withdraw (409 while a report cites it)
+```
+
+```json
+// POST /investigations/{id}/materials   (2 files, one unsupported)
+// 201 Created; a file that fails is reported, the others are stored.
+// Re-uploading the same bytes returns the existing item with duplicate: true.
+{ "materials": [{ "id": "m_1", "kind": "file", "name": "dossier.docx", "format": "docx",
+                  "chars": 5210, "finding_id": "f_9", "duplicate": false,
+                  "digest": { "outline": ["Subject dossier"], "company_identifiers": ["RO12345678"],
+                              "emails": ["jane@example.com"], "urls": [], "preview": "# Subject…" } }],
+  "errors": [{ "name": "tool.exe", "status": 415, "error": "tool.exe: supported files are …" }] }
+```
+
+Agents see these items in their brief and read them with the `read_material`
+tool; see [Architecture](02-architecture.md#analyst-supplied-material).
+
 ## Graph & entities
 
 ```text

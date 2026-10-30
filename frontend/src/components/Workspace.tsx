@@ -8,11 +8,12 @@ import { AgentsPanel } from "./AgentsPanel";
 import { AuditView } from "./AuditView";
 import { EntityPanel } from "./EntityPanel";
 import { GraphView } from "./GraphView";
+import { MaterialsView } from "./MaterialsView";
 import { ReportsView } from "./ReportsView";
 import { RunsView } from "./RunsView";
 import { Badge, ErrorBox, useLoad } from "./ui";
 
-export type Tab = "graph" | "runs" | "reports" | "audit";
+export type Tab = "graph" | "material" | "runs" | "reports" | "audit";
 type Side = "activity" | "entity" | "claude";
 
 const BASIS_LABEL: Record<string, string> = {
@@ -68,7 +69,7 @@ export function Workspace({ id, tab, onChanged }: { id: string; tab: Tab; onChan
         <p className="mt-1 max-w-[80ch] truncate text-sm text-muted" title={inv.purpose}>{inv.purpose}</p>
         <TargetBar inv={inv} onAdded={() => { reload(); onChanged(); }} />
         <nav className="mt-2 flex gap-1" aria-label="Investigation views">
-          {(["graph", "runs", "reports", "audit"] as Tab[]).map((t) => (
+          {(["graph", "material", "runs", "reports", "audit"] as Tab[]).map((t) => (
             <a key={t} href={`#/inv/${id}/${t}`}
               className={`border-b-2 px-3 py-2 text-sm capitalize ${
                 tab === t ? "border-accent font-medium text-ink" : "border-transparent text-muted hover:text-ink"}`}>
@@ -116,6 +117,7 @@ export function Workspace({ id, tab, onChanged }: { id: string; tab: Tab; onChan
           </aside>
         </div>
       )}
+      {tab === "material" && <MaterialsView investigationId={id} stream={stream} />}
       {tab === "runs" && <RunsView investigationId={id} stream={stream} />}
       {tab === "reports" && <ReportsView investigationId={id} />}
       {tab === "audit" && <AuditView investigationId={id} />}

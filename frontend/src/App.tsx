@@ -8,7 +8,7 @@ import { go } from "./nav";
 
 type Route = { page: "home" } | { page: "new" } | { page: "inv"; id: string; tab: Tab };
 
-const TABS: Tab[] = ["graph", "runs", "reports", "audit"];
+const TABS: Tab[] = ["graph", "material", "runs", "reports", "audit"];
 
 function parseHash(): Route {
   const parts = window.location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);

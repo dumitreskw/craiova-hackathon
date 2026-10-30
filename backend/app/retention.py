@@ -22,6 +22,7 @@ _PURGE_SQL = [
     "DELETE FROM edge_sources WHERE edge_id IN (SELECT id FROM edges WHERE investigation_id = ?)",
     "DELETE FROM edges WHERE investigation_id = ?",
     "DELETE FROM entities WHERE investigation_id = ?",
+    "DELETE FROM materials WHERE investigation_id = ?",
     "DELETE FROM findings WHERE investigation_id = ?",
     "DELETE FROM reports WHERE investigation_id = ?",
     "DELETE FROM agent_runs WHERE investigation_id = ?",

@@ -11,6 +11,10 @@ the quick scan. On top of the gate, two agent-specific rules:
 Report tools are read-only views of the graph, ``capture_evidence``, and
 ``submit_report`` (which lints the draft and stores it).
 
+``read_material`` reads analyst-supplied material (app/materials.py) in
+chunks. It is not a lookup and costs no budget; a worker can only read the
+material its orchestrator handed it.
+
 Tool definitions are sorted by name so the request prefix is byte-stable and
 stays cached.
 """
@@ -24,6 +28,7 @@ from typing import Any
 import connectors
 from connectors.base import EntityType
 
+from .. import materials as mat
 from .. import report as rep
 from ..detect import DetectError, canonical_key, normalize_name
 from ..evidence import capture, read_page
@@ -33,6 +38,7 @@ from ..resolver import entity_view
 from ..scan import COST_TIERS
 
 MAX_RESULT_CHARS = 8000
+MATERIAL_CHUNK = 12000
 LEGAL = rep.LEGAL_CONNECTORS
 
 # Extra connector parameters beyond the single looked-up value.
@@ -137,6 +143,18 @@ READ_PAGE = _tool(
     ["url"])
 
 
+READ_MATERIAL = _tool(
+    "read_material",
+    "Read analyst-supplied material (an uploaded file, a pasted note or a link the analyst "
+    "added), converted to markdown, in chunks. Not a lookup: it costs no budget. Cite the "
+    "material's finding id. Read what the goal needs; the brief lists each item's size, "
+    "headings and identifiers so you can pick.",
+    {"material_id": {"type": "string", "description": "m_... from the brief"},
+     "offset": {"type": "integer", "minimum": 0, "description": "character offset to start at"},
+     "max_chars": {"type": "integer", "minimum": 500, "maximum": MATERIAL_CHUNK}},
+    ["material_id"])
+
+
 # Workstreams of a deep analysis: which tools each worker gets, and its brief.
 WORKERS: dict[str, dict] = {
     "infrastructure": {
@@ -174,7 +192,10 @@ DISPATCH_WORKER = _tool(
     {"worker": {"type": "string", "enum": sorted(WORKERS)},
      "goal": {"type": "string", "description": "what this worker should establish"},
      "budget": {"type": "integer", "minimum": 2, "maximum": 40,
-                "description": "lookups this worker may spend"}},
+                "description": "lookups this worker may spend"},
+     "materials": {"type": "array", "items": {"type": "string"},
+                   "description": "material ids (m_...) this worker may read; put the facts "
+                                  "it needs from them in the goal as well"}},
     ["worker", "goal", "budget"])
 
 
@@ -263,6 +284,8 @@ class ToolBox:
     budget: int
     costly: str = "all"
     runner: Any = None  # the AgentRunner, for dispatch_worker
+    # Material ids this run may read; None means every material of the investigation.
+    materials: set[str] | None = None
     calls: int = 0
     report_id: str | None = None
     report_ok: bool = False
@@ -437,6 +460,14 @@ class ToolBox:
             if path.exists():
                 raw = json.loads(path.read_text(encoding="utf-8")).get("raw")
         keep = ("id", "connector", "input", "fetched_at", "sha256", "note", "error")
+        if f["connector"] == mat.CONNECTOR and isinstance(raw, dict):
+            text = raw.get("markdown") or ""
+            return json.dumps({**{k: f[k] for k in keep}, "material_id": raw.get("material_id"),
+                               "name": raw.get("name"), "format": raw.get("format"),
+                               "text": text[:MATERIAL_CHUNK]
+                               + (" [... use read_material for the rest]"
+                                  if len(text) > MATERIAL_CHUNK else "")},
+                              default=str, ensure_ascii=False)
         if f["connector"] == "web_read" and isinstance(raw, dict):
             text = raw.get("markdown") or ""
             return json.dumps({**{k: f[k] for k in keep}, "url": raw.get("final_url"),
@@ -493,17 +524,49 @@ class ToolBox:
         if remaining < 2:
             raise ToolError("The lookup budget is spent. Write your synthesis now.")
         budget = max(2, min(wanted, remaining, 40))
+        handed = args.get("materials") or []
+        if not isinstance(handed, list) or not all(isinstance(m, str) for m in handed):
+            raise ToolError("materials must be a list of material ids")
+        known = {r["id"] for r in self.db.query(
+            "SELECT id FROM materials WHERE investigation_id = ?", (self.inv_id,))}
+        if unknown := [m for m in handed if m not in known]:
+            raise ToolError(f"not materials of this investigation: {', '.join(unknown[:5])}")
         self.calls += budget
         child = self.runner.new_run(self.investigation, "worker", f"[{worker}] {goal}",
                                     self.user, budget)
         stats = await self.runner.run(child, self.investigation, "worker", goal, self.user,
-                                      budget, self.costly, worker=worker, parent=self.run_id)
+                                      budget, self.costly, worker=worker, parent=self.run_id,
+                                      materials=sorted(set(handed)))
         # Give back what the worker didn't spend.
         self.calls -= max(0, budget - int(stats.get("tool_calls", 0)))
         row = self.db.get("agent_runs", child)
         return _dump({"worker": worker, "run_id": child, "status": row["status"],
                       "lookups": stats.get("tool_calls"), "findings": stats.get("findings"),
                       "summary": (row["summary"] or "")[:4000]})
+
+    async def _t_read_material(self, args: dict) -> str:
+        mid = _str(args, "material_id", max_len=40)
+        row = self.db.get("materials", mid)
+        if row is None or row["investigation_id"] != self.inv_id:
+            raise ToolError(f"no material {mid} in this investigation")
+        if self.materials is not None and mid not in self.materials:
+            raise ToolError(f"{mid} was not handed to this worker; ask in your summary if "
+                            "you need it")
+        try:
+            offset = max(0, int(args.get("offset") or 0))
+            size = max(500, min(int(args.get("max_chars") or MATERIAL_CHUNK), MATERIAL_CHUNK))
+        except (TypeError, ValueError) as e:
+            raise ToolError("offset and max_chars must be integers") from e
+        text = mat.text_of(self.ledger, row)
+        chunk = text[offset:offset + size]
+        end = offset + len(chunk)
+        return json.dumps({"material_id": mid, "finding_id": row["finding_id"],
+                           "name": row["name"], "kind": row["kind"], "format": row["format"],
+                           "total_chars": len(text), "offset": offset,
+                           "next_offset": end if end < len(text) else None,
+                           **({"note": row["note"]} if row["note"] and row["kind"] != "link"
+                              else {}),
+                           "text": chunk}, ensure_ascii=False)
 
     async def _t_read_page(self, args: dict) -> str:
         url = _str(args, "url", max_len=2000)
