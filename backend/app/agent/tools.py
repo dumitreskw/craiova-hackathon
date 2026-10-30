@@ -249,7 +249,8 @@ class ToolBox:
             "SELECT t.value, e.key FROM targets t LEFT JOIN entities e ON e.id = t.entity_id "
             "WHERE t.investigation_id = ? AND t.type = ?", (self.inv_id, etype.value))
         if etype in (EntityType.PERSON, EntityType.ORGANIZATION):
-            return {normalize_name(r["value"]) for r in rows}
+            return ({normalize_name(r["value"]) for r in rows}
+                    | {r["key"] for r in rows if r["key"]})
         return {r["key"] for r in rows if r["key"]}
 
     def _find_entity(self, etype: str, key: str) -> str | None:
@@ -269,8 +270,12 @@ class ToolBox:
                 entity_id = about if row and row["investigation_id"] == self.inv_id else None
         else:
             value = _str(args, "value")
-            if spec.accepts in (EntityType.PERSON, EntityType.ORGANIZATION):
+            if spec.accepts == EntityType.PERSON:
                 key = normalize_name(value)
+                arg = value
+            elif spec.accepts == EntityType.ORGANIZATION:
+                # CUI / UK company numbers keep their canonical form; names normalize.
+                key = canonical_key(EntityType.ORGANIZATION, value)
                 arg = value
             else:
                 try:

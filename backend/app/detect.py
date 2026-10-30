@@ -16,6 +16,7 @@ from connectors.base import EntityType
 _EMAIL = re.compile(r"^[\w.+-]+@[\w-]+(\.[\w-]+)+$")
 _DOMAIN = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _CUI = re.compile(r"^(RO)?\d{2,10}$", re.IGNORECASE)
+_UK_COMPANY = re.compile(r"^(GB|UK)[0-9A-Z]{2}\d{6}$", re.IGNORECASE)
 _PHONE = re.compile(r"^\+\d[\d\s().-]{6,}$")
 _USERNAME = re.compile(r"^@?[A-Za-z0-9_.-]{2,39}$")
 
@@ -53,7 +54,7 @@ def detect(value: str, hint: str = "auto") -> tuple[EntityType, str]:
         pass
     if _DOMAIN.match(raw.lower().rstrip(".")):
         return EntityType.DOMAIN, canonical_key(EntityType.DOMAIN, raw)
-    if _CUI.match(raw.replace(" ", "")):
+    if _CUI.match(raw.replace(" ", "")) or _UK_COMPANY.match(raw.replace(" ", "")):
         return EntityType.ORGANIZATION, canonical_key(EntityType.ORGANIZATION, raw)
     if _PHONE.match(raw):
         return EntityType.PHONE, canonical_key(EntityType.PHONE, raw)
@@ -74,6 +75,8 @@ def canonical_key(etype: EntityType, value: str) -> str:
         return "+" + re.sub(r"\D", "", v)
     if etype == EntityType.ORGANIZATION and _CUI.match(v.replace(" ", "")):
         return "RO" + re.sub(r"\D", "", v)
+    if etype == EntityType.ORGANIZATION and _UK_COMPANY.match(v.replace(" ", "")):
+        return "GB" + v.replace(" ", "").upper()[2:]
     if etype in (EntityType.PERSON, EntityType.ORGANIZATION):
         return normalize_name(v)
     if etype == EntityType.IP:

@@ -109,8 +109,14 @@ scan stumbles on.
 | `dehashed` | DeHashed breach index | Email/username/domain → breach names + data classes | paid | seed-only; values (passwords, hashes, other PII) dropped before storage |
 | `holehe` | services' signup/recovery endpoints | Email → services it is registered on | free | seed-only |
 | `maigret` | top ~300 sites | Username → profiles | free | seed-only, ~30 s; search pages filtered out |
+| `anaf` | Romanian tax registry (ANAF API v9) | CUI → legal name, J number, CAEN, incorporation, addresses, VAT, inactive / struck off | free, no key | 0.3 s |
+| `vies` | EU VIES | VAT number → valid, registered name and address | free, no key | 0.8 s |
+| `gleif` | Global LEI index | name / LEI → LEI, local registration number (linked to the ANAF / Companies House node), addresses, ultimate parent | free, no key | 0.4 s |
+| `companies_house` | UK Companies House | company number / exact name → profile, officers, persons with significant control | free key | officers are recorded, never auto-screened |
+| `wayback` | Internet Archive CDX | Domain → age, old subdomains, archived files and admin paths | free, no key | ~15 s |
+| `hibp` | Have I Been Pwned | Email → breaches, dates, data classes | ~US$4.39/month (Core 1) | seed-only; no passwords |
 | `dork_search` | **SearXNG** (self-hosted metasearch), DuckDuckGo fallback | query → URLs | free | 40 merged results in ~2 s |
-| `web_read` | **Firecrawl** → **Lightpanda** → plain HTTP | URL → page text (markdown), emails, social profiles, JSON-LD/OpenGraph | free | ~0.5-2 s with Lightpanda; target-owned hosts follow active rules |
+| `web_read` | **Firecrawl** → plain HTTP → **Lightpanda** | URL → main text, author/date, emails, social profiles, JSON-LD/OpenGraph, company identifiers (RO CUI, UK company number) that lead into the registries | free | ~0.5-2 s with Lightpanda; target-owned hosts follow active rules |
 | `screenshot` | headless Chromium | URL → banner-stamped PNG evidence | free | target-owned hosts follow active rules |
 
 ### Why SearXNG, Lightpanda and Firecrawl

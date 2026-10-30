@@ -72,6 +72,12 @@ SOURCE_RELIABILITY: dict[str, float] = {
     "dehashed": 0.8,
     "holehe": 0.7,
     "maigret": 0.6,
+    "anaf": 0.95,
+    "vies": 0.95,
+    "gleif": 0.95,
+    "companies_house": 0.95,
+    "wayback": 0.9,
+    "hibp": 0.9,
 }
 
 

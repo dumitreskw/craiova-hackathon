@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from .base import ConnectorResult, EntityType
+from .archive_breach import hibp, wayback
 from .crtsh import crtsh_subdomains
 from .dehashed import dehashed
 from .dns_lookup import dns_lookup
@@ -26,6 +27,7 @@ from .national_wanted import national_wanted
 from .otx import otx_passive_dns
 from .rdap import rdap_domain
 from .recon_tools import dnstwist, holehe, maigret, subfinder
+from .registries import anaf, companies_house, gleif, vies
 from .sanctions import sanctions
 from .screenshot import screenshot
 from .urlscan import urlscan
@@ -125,6 +127,27 @@ REGISTRY: dict[str, ConnectorSpec] = {
         ConnectorSpec("maigret", maigret, EntityType.USERNAME, True,
                       "Where a username exists across the top ~300 sites.", timeout=320,
                       seed_only=True),
+        # Official registries: who a company legally is.
+        ConnectorSpec("anaf", anaf, EntityType.ORGANIZATION, True,
+                      "Romanian tax registry (ANAF) by CUI: legal name, J number, CAEN, "
+                      "incorporation date, addresses, VAT and inactive/struck-off status."),
+        ConnectorSpec("vies", vies, EntityType.ORGANIZATION, True,
+                      "EU VAT check (VIES) by VAT number, e.g. RO14399840: valid or not, "
+                      "registered name and address."),
+        ConnectorSpec("gleif", gleif, EntityType.ORGANIZATION, True,
+                      "Global LEI index by legal name or LEI: registration number, addresses, "
+                      "status, ultimate parent company."),
+        ConnectorSpec("companies_house", companies_house, EntityType.ORGANIZATION, True,
+                      "UK Companies House by company number (GB12345678) or exact name: "
+                      "profile, officers, persons with significant control.",
+                      requires_key="COMPANIES_HOUSE_API_KEY"),
+        ConnectorSpec("wayback", wayback, EntityType.DOMAIN, True,
+                      "Internet Archive history of a domain: age, old subdomains, archived "
+                      "files and admin/login paths no longer on the live site.", timeout=90),
+        ConnectorSpec("hibp", hibp, EntityType.EMAIL, True,
+                      "Have I Been Pwned: breaches an email appears in, with dates and data "
+                      "classes. Never returns passwords.", requires_key="HIBP_API_KEY",
+                      seed_only=True),
     ]
 }
 
@@ -165,4 +188,10 @@ __all__ = [
     "dehashed",
     "holehe",
     "maigret",
+    "anaf",
+    "vies",
+    "gleif",
+    "companies_house",
+    "wayback",
+    "hibp",
 ]

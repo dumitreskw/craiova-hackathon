@@ -53,6 +53,13 @@ _SOCIAL_HOSTS = {
     "mastodon.social": "mastodon", "bsky.app": "bluesky", "reddit.com": "reddit",
 }
 _IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
+# Romanian sites print their fiscal code ("CUI: RO14399840", "CIF 14399840") and
+# UK ones their company number; both lead straight to the official registry.
+_RO_CUI = re.compile(r"\b(?:C\.?U\.?I\.?|C\.?I\.?F\.?|cod(?:ul)? (?:unic de inregistrare|fiscal))"
+                     r"\s*[:.\-]?\s*(RO)?\s?(\d{2,10})\b", re.IGNORECASE)
+_UK_NO = re.compile(r"\b(?:company (?:registration )?(?:number|no\.?)|registered in england"
+                    r"(?: and wales)?(?: under)?(?: company)?(?: number| no\.?)?)\s*[:.]?\s*"
+                    r"([0-9A-Z]{2}\d{6})\b", re.IGNORECASE)
 
 
 _JS_SHELL = re.compile(r"enable javascript|requires javascript|javascript is (disabled|required)"
@@ -198,6 +205,13 @@ def _result(url: str, page: dict, errors: dict) -> ConnectorResult:
         entities.append(EntityCandidate(EntityType.EMAIL, e, match_quality=0.8))
         rels.append(RelationshipCandidate("mentions_email", EntityType.URL, url,
                                           EntityType.EMAIL, e))
+    identifiers = sorted({f"RO{m.group(2)}" for m in _RO_CUI.finditer(full_text)}
+                         | {f"GB{m.group(1).upper()}" for m in _UK_NO.finditer(full_text)})
+    for ident in identifiers[:5]:
+        entities.append(EntityCandidate(EntityType.ORGANIZATION, ident,
+                                        {"identifier_seen_on": final}, match_quality=0.8))
+        rels.append(RelationshipCandidate("names_company", EntityType.URL, url,
+                                          EntityType.ORGANIZATION, ident))
     for key, (platform, link) in sorted(socials.items())[:30]:
         entities.append(EntityCandidate(EntityType.SOCIAL_PROFILE, key,
                                         {"platform": platform, "url": link}, match_quality=0.8))
@@ -210,6 +224,7 @@ def _result(url: str, page: dict, errors: dict) -> ConnectorResult:
              "page_metadata": page_meta, "text_source": text_source,
              "markdown": markdown[:MAX_TEXT], "truncated": len(markdown) > MAX_TEXT,
              "emails": sorted(emails), "socials": {k: v[1] for k, v in socials.items()},
+             "company_identifiers": identifiers,
              "external_domains": sorted(external)[:200],
              "structured_data": structured,
              "backend_errors": errors},

@@ -34,8 +34,8 @@ PIVOTS: dict[EntityType, list[str]] = {
     EntityType.DOMAIN: ["dns", "rdap", "crtsh", "subfinder", "urlscan", "otx_domain",
                         "wayback", "virustotal", "dnstwist", "hunter", "tomba", "http_probe"],
     EntityType.IP: ["otx_ip", "ipinfo", "shodan", "virustotal"],
-    EntityType.ORGANIZATION: ["anaf", "vies", "opencorporates", "gleif", "sanctions",
-                              "seap", "news", "dork_search"],
+    EntityType.ORGANIZATION: ["anaf", "vies", "companies_house", "gleif", "opencorporates",
+                              "sanctions", "seap", "news", "dork_search"],
     EntityType.PERSON: ["sanctions", "interpol", "europol", "national_wanted",
                         "court_records", "news", "dork_search"],
     EntityType.EMAIL: ["gravatar", "holehe", "dehashed", "hibp", "email_rep", "dork_search"],
@@ -52,8 +52,22 @@ PIVOT_ON_DISCOVERED = {EntityType.DOMAIN, EntityType.IP, EntityType.ORGANIZATION
                        EntityType.EMAIL, EntityType.USERNAME}
 
 # Turn an entity into the connector's argument. Default: the canonical key.
+def _org_name(e: dict) -> str:
+    return e["attributes"].get("legal_name") or e["label"] or e["key"]
+
+
 ARG: dict[str, Callable[[dict], str]] = {
     "dork_search": lambda e: f'"{e["label"] if e["type"] == "Person" else e["key"]}"',
+    # Name-based registries get the legal name once a registry has supplied it.
+    "gleif": _org_name,
+    "sanctions": lambda e: _org_name(e) if e["type"] == "Organization" else e["key"],
+}
+
+# Registries that only make sense for a matching identifier format.
+APPLIES: dict[str, Callable[[dict], bool]] = {
+    "anaf": lambda e: e["key"].upper().startswith("RO") and e["key"][2:].isdigit(),
+    "vies": lambda e: e["key"][:2].isalpha() and e["key"][2:3].isdigit(),
+    "companies_house": lambda e: e["key"].upper().startswith("GB") and e["key"][2:].isalnum(),
 }
 
 MIN_PIVOT_CONFIDENCE = 0.5
@@ -68,6 +82,8 @@ def connectors_for(entity: dict, investigation: dict, depth: int = 0) -> list[st
     for name in PIVOTS.get(EntityType(entity["type"]), []):
         spec = connectors.REGISTRY.get(name)
         if spec is None or spec.cost not in tiers or (spec.seed_only and depth > 0):
+            continue
+        if name in APPLIES and not APPLIES[name](entity):
             continue
         try:
             guard.check(investigation, name, spec.passive, entity["key"])
