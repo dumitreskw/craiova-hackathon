@@ -29,7 +29,7 @@ async def test_credits_parse_and_isolate_failures(platform, monkeypatch):
                             "billingPeriodEnd": "2026-11-30T21:41:22Z"}}))
     out = {r["source"]: r for r in await cr.credits(platform.db, refresh=True)}
     assert out["hunter"]["remaining"] == 49 and out["hunter"]["resets"] == "2026-11-13"
-    assert out["dehashed"]["status"] == "error" and "search access" in out["dehashed"]["note"]
+    assert out["dehashed"]["status"] == "unavailable" and "search access" in out["dehashed"]["note"]
     assert out["firecrawl"]["used"] == 5 and out["firecrawl"]["resets"] == "2026-11-30"
     assert out["virustotal"]["status"] == "error"          # one failure doesn't break the rest
     assert out["tomba"]["status"] == "unavailable" and out["hibp"]["status"] == "unavailable"

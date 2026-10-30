@@ -30,7 +30,9 @@ class SPAStaticFiles(StaticFiles):
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as e:
-            if e.status_code != 404 or path.startswith("api/"):
+            # Unknown API paths must stay 404s. Check the request URL, not `path`
+            # (StaticFiles normalises separators, so it is "api\\..." on Windows).
+            if e.status_code != 404 or scope.get("path", "").startswith(("/api/", "/mcp")):
                 raise
             return await super().get_response("index.html", scope)
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, Loader2, X } from "lucide-react";
 import { ApiError } from "../api";
 
@@ -243,4 +243,23 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
       </div>
     </div>
   );
+}
+
+/** Keeps one broken view from blanking the whole app. */
+export class ErrorBoundary extends Component<{ children: ReactNode }, { error: unknown }> {
+  state = { error: null as unknown };
+  static getDerivedStateFromError(error: unknown) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-6">
+          <ErrorBox error={this.state.error} onDismiss={() => this.setState({ error: null })} />
+          <p className="mt-2 text-sm text-muted">This view hit an error. The other tabs still work.</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }

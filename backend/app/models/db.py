@@ -135,6 +135,25 @@ CREATE TABLE IF NOT EXISTS reports (
     updated_at       TEXT NOT NULL
 );
 
+-- Material the analyst supplies (files, notes, links), converted to markdown.
+-- The text lives in the finding's payload so claims can cite it like a lookup.
+CREATE TABLE IF NOT EXISTS materials (
+    id               TEXT PRIMARY KEY,
+    investigation_id TEXT NOT NULL REFERENCES investigations(id),
+    kind             TEXT NOT NULL,                       -- file | text | link
+    name             TEXT NOT NULL,
+    format           TEXT NOT NULL,                       -- pdf | docx | md | txt | text | web
+    size_bytes       INTEGER NOT NULL DEFAULT 0,
+    sha256           TEXT,                                -- of the original bytes
+    chars            INTEGER NOT NULL DEFAULT 0,          -- length of the markdown
+    file             TEXT,                                -- original upload, under evidence/
+    finding_id       TEXT REFERENCES findings(id),
+    note             TEXT,
+    digest           TEXT NOT NULL DEFAULT '{}',          -- outline, identifiers, preview
+    added_by         TEXT NOT NULL,
+    created_at       TEXT NOT NULL
+);
+
 -- Append-only: who queried what, when, why, and whether it was allowed.
 CREATE TABLE IF NOT EXISTS audit (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,10 +175,11 @@ CREATE INDEX IF NOT EXISTS ix_findings_inv ON findings(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_entities_inv ON entities(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_edges_inv ON edges(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_audit_inv ON audit(investigation_id, ts);
+CREATE INDEX IF NOT EXISTS ix_materials_inv ON materials(investigation_id);
 """
 
 JSON_COLUMNS = {"settings", "input", "attributes", "stats", "body", "detail",
-                "transcript"}
+                "transcript", "digest"}
 
 # Columns added after the first release: (table, column, DDL). Applied on open,
 # so an existing database file keeps working.

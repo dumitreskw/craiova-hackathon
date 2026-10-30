@@ -79,6 +79,8 @@ SOURCE_RELIABILITY: dict[str, float] = {
     "wayback": 0.9,
     "hibp": 0.9,
     "virustotal": 0.85,
+    # Files, notes and links the analyst supplies: leads of unknown provenance.
+    "analyst_material": 0.7,
 }
 
 

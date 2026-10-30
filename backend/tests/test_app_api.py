@@ -199,3 +199,27 @@ async def test_api_switching_to_active_mode(client):
 async def test_api_connectors_listing(client):
     names = {c["name"] for c in (await client.get("/connectors")).json()}
     assert "dns" in names
+
+
+async def test_unknown_api_paths_are_404_not_the_app(platform, tmp_path, monkeypatch):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html>app</html>", encoding="utf-8")
+    monkeypatch.setenv("OSINT_FRONTEND_DIR", str(dist))
+    app = create_app(platform)
+    app.state.platform = platform
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url="http://test") as c:
+        assert (await c.get("/api/v1/does-not-exist")).status_code == 404
+        r = await c.get("/inv/some/client/route")
+        assert r.status_code == 200 and "app" in r.text
+
+
+async def test_draft_skips_capture_hashes(platform, make_investigation):
+    inv = make_investigation()
+    await platform.ledger.run(inv, "screenshot", "https://news.example/a", user="t", run_by="t",
+                              kwargs={"out_dir": str(platform.settings.evidence_dir / "x")})
+    body = rep.draft_from_graph(platform.db, inv)
+    texts = " ".join(c["text"] for s in body["sections"] for c in s["claims"])
+    assert "sha256" not in texts
+    assert not [i for i in rep.lint(platform.db, inv["id"], body) if i["level"] == "error"]

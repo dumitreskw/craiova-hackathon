@@ -54,7 +54,8 @@ async def _dehashed(c: httpx.AsyncClient) -> dict:
                      headers={"Dehashed-Api-Key": key})).json()
     access = bool(d.get("search_access"))
     return _entry("dehashed", "DeHashed", remaining=d.get("search_credits"), unit="search credits",
-                  status="ok" if access else "error",
+                  # Balance was read fine; searches are just not enabled.
+                  status="ok" if access else "unavailable",
                   note=None if access else "search access is off on this account: searches "
                                            "will be refused until the subscription is active",
                   dashboard_url=url, extra={"whois_credits": d.get("whois_credits")})

@@ -55,6 +55,7 @@ SOURCE_NAMES = {
     "europol": "EU Most Wanted (ENFAST)", "sanctions": "OpenSanctions",
     "national_wanted": "National police wanted lists",
     "screenshot": "Page capture",
+    "analyst_material": "Analyst-supplied material",
 }
 
 STATUS_LABEL = {
@@ -140,6 +141,13 @@ def lint(db: Database, investigation_id: str, body: dict, audience: str = "inter
             issue("error", "legal_assertion",
                   "a wanted/sanctions/court hit is stated as fact; mark it 'unverified' "
                   "or confirm the candidate with a disambiguator first", cid)
+
+        # Supplied files and notes are leads from the analyst or client.
+        if status == "verified" and evidence and all(
+                findings.get(f, {}).get("connector") == "analyst_material" for f in evidence):
+            issue("warning", "supplied_only",
+                  "rests only on analyst-supplied material; cite a public source that "
+                  "confirms it or mark it 'unverified'", cid)
 
         if _CREDENTIAL.search(text):
             issue("error", "credential",
@@ -259,7 +267,8 @@ def build_blocks(db: Database, investigation: dict, body: dict, audience: str = 
         for f in evidence:
             source = SOURCE_NAMES.get(f["connector"], f["connector"])
             arg = (f.get("input") or {}).get("arg", "")
-            verb = "captured" if f["connector"] == "screenshot" else "retrieved"
+            verb = {"screenshot": "captured", "analyst_material": "supplied"}.get(
+                f["connector"], "retrieved")
             line = f"[{f['n']}] {source}: {arg}, {verb} {f['fetched_at'][:10]}"
             if internal:
                 line += (f" — finding {f['id']}, sha256 {(f['sha256'] or '')[:16]}…, "
@@ -360,6 +369,11 @@ TYPE_SECTIONS = [
 MAX_PER_TYPE = 15
 
 
+# Attributes that are plumbing, not findings: hashes and file names would also
+# trip the credential rule of the linter.
+_DRAFT_SKIP = {"unverified", "sha256", "file", "raw_path", "listing_url"}
+
+
 def draft_from_graph(db: Database, investigation: dict, min_confidence: float = 0.5) -> dict:
     """Build a plain, fully cited report body straight from the graph.
 
@@ -388,8 +402,10 @@ def draft_from_graph(db: Database, investigation: dict, min_confidence: float = 
         if not ev:
             return None  # a bare seed with nothing found yet
         attrs = best_attributes(row["attributes"])
+        if row["type"] == "Document" and attrs.get("kind") == "screenshot":
+            return None  # captures are evidence for other claims, not findings
         detail = ", ".join(f"{k}: {v}" for k, v in attrs.items()
-                           if isinstance(v, (str, int, float)) and k != "unverified")
+                           if isinstance(v, (str, int, float)) and k not in _DRAFT_SKIP)
         text = f"{row['type']} {row['key']}" + (f" ({detail})" if detail else "")
         return {"id": cid(), "text": text[:400], "evidence": ev, "entities": [row["id"]],
                 "status": "verified"}

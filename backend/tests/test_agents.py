@@ -240,7 +240,7 @@ async def test_report_agent_without_a_clean_report_fails(agent_platform):
     assert r["status"] == "failed" and "No lint-clean report" in r["summary"]
 
 
-async def test_report_agent_captures_third_party_pages_only(agent_platform):
+async def test_report_agent_captures_pages_including_the_targets_own(agent_platform):
     p = agent_platform
     inv, _ = await _collected(p)
     model = p.script(
@@ -251,7 +251,8 @@ async def test_report_agent_captures_third_party_pages_only(agent_platform):
     await run(p, inv, "report")
     results = {b["tool_use_id"]: b for b in model.requests[1]["last"]["content"]}
     assert not results["a"].get("is_error") and "finding_id" in results["a"]["content"]
-    assert results["b"]["is_error"] and "own infrastructure" in results["b"]["content"]
+    # The target's own public pages are a page view, allowed in passive mode.
+    assert not results["b"].get("is_error") and "finding_id" in results["b"]["content"]
 
 
 # --- evidence capture + API ------------------------------------------------------------------

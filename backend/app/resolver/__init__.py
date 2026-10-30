@@ -179,6 +179,56 @@ class Resolver:
                                              "last_seen": now()})
         self._recompute_entity(keep_id)
 
+    def drop_finding(self, finding_id: str) -> list[str]:
+        """Take one finding's support out of the graph (withdrawn material).
+
+        Attribute values, edges and entities that only this finding supported
+        go; the rest lose it as a source and get their confidence recomputed.
+        Targets always stay. Returns the ids of the entities removed.
+        """
+        c = self.db.conn
+        entity_ids = [r["entity_id"] for r in self.db.query(
+            "SELECT entity_id FROM entity_sources WHERE finding_id = ?", (finding_id,))]
+        edge_ids = [r["edge_id"] for r in self.db.query(
+            "SELECT edge_id FROM edge_sources WHERE finding_id = ?", (finding_id,))]
+        c.execute("DELETE FROM entity_sources WHERE finding_id = ?", (finding_id,))
+        c.execute("DELETE FROM edge_sources WHERE finding_id = ?", (finding_id,))
+        for edge_id in edge_ids:
+            scores = c.execute("SELECT reliability, match_quality FROM edge_sources "
+                               "WHERE edge_id = ?", (edge_id,)).fetchall()
+            if scores:
+                self.db.update("edges", edge_id, {"confidence": combine([tuple(s) for s in scores])})
+            else:
+                c.execute("DELETE FROM edges WHERE id = ?", (edge_id,))
+        removed = []
+        for eid in entity_ids:
+            row = self.db.get("entities", eid)
+            if row is None:
+                continue
+            attrs = {}
+            for name, values in row["attributes"].items():
+                kept = [{**v, "sources": [s for s in v["sources"] if s != finding_id]}
+                        for v in values]
+                kept = [v for v in kept if v["sources"]]
+                if kept:
+                    attrs[name] = kept
+            sourced = c.execute("SELECT 1 FROM entity_sources WHERE entity_id = ?",
+                                (eid,)).fetchone()
+            is_target = c.execute("SELECT 1 FROM targets WHERE entity_id = ?", (eid,)).fetchone()
+            if sourced or is_target:
+                self.db.update("entities", eid, {"attributes": attrs})
+                self._recompute_entity(eid)
+                continue
+            for edge in self.db.query("SELECT id FROM edges WHERE from_id = ? OR to_id = ?",
+                                      (eid, eid)):
+                c.execute("DELETE FROM edge_sources WHERE edge_id = ?", (edge["id"],))
+                c.execute("DELETE FROM edges WHERE id = ?", (edge["id"],))
+            c.execute("DELETE FROM notes WHERE entity_id = ?", (eid,))
+            c.execute("DELETE FROM entities WHERE id = ?", (eid,))
+            removed.append(eid)
+        c.commit()
+        return removed
+
     def ensure_entity(self, investigation_id: str, etype: EntityType, key: str) -> str:
         """Create (or find) a seed entity that has no finding behind it yet."""
         row = self._find(investigation_id, etype.value, key)

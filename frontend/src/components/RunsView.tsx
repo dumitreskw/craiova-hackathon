@@ -115,7 +115,7 @@ export function RunsView({ investigationId, stream }: { investigationId: string;
                     <td className="whitespace-nowrap py-3 pr-4 text-muted">{when(r.started_at)}</td>
                     <td className="whitespace-nowrap py-3 pr-4 text-muted">{duration(r)}</td>
                     <td className="py-3 pr-4">
-                      <div className="max-w-xl">{r.summary || "—"}</div>
+                      <div className="line-clamp-3 max-w-xl" title={r.summary || undefined}>{r.summary || "—"}</div>
                       {stats.length > 0 && (
                         <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted">
                           {stats.map(([k, v]) => <span key={k}>{k.replace(/_/g, " ")} {String(v)}</span>)}

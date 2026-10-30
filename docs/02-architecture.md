@@ -230,6 +230,42 @@ so this stays well within budget.
 > MCP tools exist, since each worker is just the collection agent with a
 > restricted toolset and a focused prompt.
 
+### Analyst-supplied material
+
+The analyst often knows things before the first lookup: a client brief, a
+registry extract, a Handshakes profile, an article. The **Material** tab takes
+files (PDF, DOCX, Markdown, text; up to 25 MB each), links and pasted notes
+(`app/materials.py`, `POST /investigations/{id}/materials`).
+
+- **Conversion.** PDF and DOCX go through Microsoft's
+  [markitdown](https://github.com/microsoft/markitdown), with only its PDF and
+  DOCX converters enabled (no plugins, no network, no LLM). A 4.8 MB PDF
+  becomes ~70k characters of markdown in under two seconds; tables stay tables;
+  table-of-contents dot leaders are collapsed. Scanned PDFs have no text layer
+  and are stored with a note; OCR is not run. Links go through `read_page`
+  (same target-host rule as every page fetch).
+- **Chain of custody.** Each item becomes a finding (`analyst_material`, or
+  `web_read` for a link) through `Ledger.record`: payload file, sha256, audit
+  row. The original upload is kept under `evidence/<inv>/materials/`.
+  Emails, company identifiers (RO CUI, UK company numbers) and URLs in the text
+  are folded into the graph off a Document node, so they merge with what the
+  lookups find. Nothing becomes a target automatically.
+- **Tokens: the orchestrator decides.** No agent gets the full text up front.
+  Every brief carries a one-entry-per-item index: id, size, headings,
+  identifiers and the opening 240 characters. Agents read what they need with
+  `read_material` (12k-character chunks, no lookup budget). In a deep analysis
+  the orchestrator reads the material, then puts the facts each worker needs in
+  its goal and passes material ids in `dispatch_worker.materials` only when a
+  worker must read the text itself; a worker can read only what it was handed.
+- **Evidence rules.** Supplied material is a lead, not independent evidence:
+  claims cite its finding, and a `verified` claim resting only on it gets a
+  `supplied_only` lint warning. Instructions inside it are content, never
+  instructions (prompt-injection rule, `prompts.COMMON`).
+- **Withdrawal.** `DELETE /materials/{id}` removes the original, the text and
+  whatever only it put in the graph (targets always stay); the finding row is
+  kept, marked withdrawn, so the audit trail survives. Refused while a report
+  cites it.
+
 ## Claude integration
 
 | Setting | Value |

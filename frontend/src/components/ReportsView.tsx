@@ -181,7 +181,11 @@ function ReportDetail({ reportId }: { reportId: string }) {
         </div>
       </div>
 
-      <LintPanel internal={internal} client={client} audience={audience} onPick={setAudience} />
+      <LintPanel internal={internal} client={client} audience={audience} onPick={setAudience}
+        onJump={(claim) => {
+          setView("claims");
+          window.setTimeout(() => document.getElementById(`claim-${claim}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 50);
+        }} />
 
       {exportError ? (
         <div className="px-6 pt-3">
@@ -201,12 +205,14 @@ function ReportDetail({ reportId }: { reportId: string }) {
   );
 }
 
-function LintPanel({ internal, client, audience, onPick }: {
+function LintPanel({ internal, client, audience, onPick, onJump }: {
   internal: Lint | null; client: Lint | null; audience: Audience; onPick: (a: Audience) => void;
+  onJump: (claim: string) => void;
 }) {
   const rows: [Audience, Lint | null][] = [["internal", internal], ["client", client]];
   const current = audience === "internal" ? internal : client;
   const general = (current?.issues || []).filter((i) => !i.claim);
+  const blocking = (current?.issues || []).filter((i) => i.claim && i.level === "error");
   return (
     <div className="border-b border-line bg-ground/60 px-6 py-3">
       <div className="flex flex-wrap gap-x-8 gap-y-2">
@@ -231,6 +237,18 @@ function LintPanel({ internal, client, audience, onPick }: {
           );
         })}
       </div>
+      {blocking.length > 0 && (
+        <ul className="mt-2 space-y-1 pl-2 text-sm">
+          {blocking.slice(0, 6).map((i, n) => (
+            <li key={n} className="flex items-baseline gap-2 text-danger">
+              <button className="shrink-0 rounded border border-danger/40 px-1.5 font-mono text-xs hover:bg-danger/10" onClick={() => onJump(i.claim!)}
+                title="Show this claim">{i.claim}</button>
+              <span>{i.message}</span>
+            </li>
+          ))}
+          {blocking.length > 6 && <li className="text-xs text-muted">{blocking.length - 6} more, marked on the claims.</li>}
+        </ul>
+      )}
       {general.length > 0 && (
         <ul className="mt-2 space-y-1 pl-2 text-sm">
           {general.map((i, n) => (
@@ -291,7 +309,7 @@ function ClaimsView({ report, byClaim, onFinding }: {
               const blocked = problems.some((p) => p.level === "error");
               const evidence = c.evidence || [];
               return (
-                <li key={c.id} className={`rounded-md border px-4 py-3 ${blocked ? "border-danger/50 bg-danger/5" : "border-line/70"}`}>
+                <li key={c.id} id={`claim-${c.id}`} className={`scroll-mt-4 rounded-md border px-4 py-3 ${blocked ? "border-danger/50 bg-danger/5" : "border-line/70"}`}>
                   <div className="flex items-start gap-3">
                     <Mono className="w-9 shrink-0 pt-0.5 text-muted">{c.id}</Mono>
                     <div className="min-w-0 flex-1">

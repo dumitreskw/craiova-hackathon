@@ -1,9 +1,9 @@
 """Read a web page: clean text (markdown), contacts, links and structured data.
 
 The agents use this to read the pages behind search hits instead of judging a
-target from snippets. It fetches the page, so like ``screenshot`` it touches
-whatever host serves the URL; the app keeps the target's own hosts behind the
-active-mode rules (``app/evidence.py``).
+target from snippets. It fetches the page like any visitor would, so like
+``screenshot`` it touches whatever host serves the URL, including the
+target's own public pages (``app/evidence.py``).
 
 Backends, cheapest first, each used only when the previous one returned a
 thin, blocked or JavaScript-only page:

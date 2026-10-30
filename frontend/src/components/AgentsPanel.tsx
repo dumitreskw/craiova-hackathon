@@ -297,6 +297,7 @@ function RunCard({ run, live, workers, liveMap, onCancel }: {
 }) {
   const status = statusOf(run, live);
   const [open, setOpen] = useState(status === "running");
+  const [full, setFull] = useState(false);
   const done = workers.filter((w) => statusOf(w, liveMap.get(w.id)) !== "running").length;
   const reportId = run.stats?.report_id as string | undefined;
   return (
@@ -313,7 +314,16 @@ function RunCard({ run, live, workers, liveMap, onCancel }: {
             <span className="text-xs text-muted">{ago(run.started_at)}</span>
           </div>
           {run.goal && <p className="mt-1 text-sm text-muted">{run.goal}</p>}
-          {run.summary && <p className="mt-2 text-sm">{run.summary}</p>}
+          {run.summary && (
+            <div className="mt-2">
+              <p className={`max-w-[80ch] whitespace-pre-wrap text-sm leading-relaxed ${full ? "" : "line-clamp-4"}`}>{run.summary}</p>
+              {run.summary.length > 400 && (
+                <button className="mt-1 text-xs font-medium text-accent-text hover:underline" onClick={() => setFull((f) => !f)}>
+                  {full ? "Show less" : "Show the full summary"}
+                </button>
+              )}
+            </div>
+          )}
           {reportId && <a href={`${window.location.hash.replace(/\/[^/]*$/, "")}/reports`} className="mt-2 inline-block text-sm text-accent-text hover:underline">Open the report</a>}
         </div>
         {status === "running" && (
@@ -331,7 +341,7 @@ function RunCard({ run, live, workers, liveMap, onCancel }: {
           <ul className="mt-3 space-y-1.5">
             {workers.map((w) => {
               const lw = liveMap.get(w.id);
-              const name = (w.stats?.worker as string | undefined) || lw?.worker || "worker";
+              const name = (w.stats?.worker as string | undefined) || lw?.worker || KIND_LABEL[w.kind] || w.kind;
               return (
                 <WorkerRow key={w.id} name={name} run={w} live={lw} />
               );

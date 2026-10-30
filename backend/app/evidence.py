@@ -1,9 +1,11 @@
 """Evidence capture: screenshot a URL into the investigation's evidence store.
 
 Used by the API ("capture evidence" on a URL node) and by the report agent.
-The screenshot connector fetches the page, so it is active toward the host
-serving it. The investigation must be in active mode (enforced by the ledger's
-gate).
+The screenshot and web_read connectors fetch the page like any visitor, so
+they reach whatever host serves it, including the target's own public pages.
+They are registered as passive (a single page view), so they run in any
+investigation mode; truly active connectors (http_probe) still need active
+mode, enforced by the ledger's gate.
 """
 
 from __future__ import annotations

@@ -70,7 +70,7 @@ function readPalette(): Palette {
     accent: cssRgb("accent"),
     danger: cssRgb("danger"),
     // Blue-grey edges at low opacity: structure without noise.
-    edge: light ? "rgba(96, 116, 130, 0.30)" : "rgba(144, 164, 174, 0.26)",
+    edge: light ? "rgba(84, 104, 120, 0.42)" : "rgba(144, 164, 174, 0.26)",
     faded: light ? "rgba(180, 190, 200, 0.55)" : "rgba(70, 84, 98, 0.55)",
   };
 }
@@ -103,7 +103,7 @@ function makeDrawLabel(pal: { current: Palette }): DrawFn {
     if (!data.label) return;
     const size = settings.labelSize;
     ctx.font = `${settings.labelWeight} ${size}px ${settings.labelFont}`;
-    const x = data.x + data.size + 4;
+    const x = data.x + data.size + 7;
     const y = data.y + size / 3;
     ctx.lineJoin = "round";
     ctx.lineWidth = 3.5;
@@ -223,6 +223,8 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
           }
         }
         if (node === selectedRef.current) {
+          res.color = data.color;
+          res.label = data.label;
           res.forceLabel = true;
           res.highlighted = true;
           res.zIndex = 3;
@@ -475,6 +477,8 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     });
     for (const id of dropNodes) g.dropNode(id);
     changed += dropNodes.length;
+    const hov = hoverRef.current.node;
+    if (hov && !view.nodes.has(hov)) hoverRef.current = { node: null, neighbors: new Set() };
 
     const dropEdges: string[] = [];
     g.forEachEdge((id) => {
