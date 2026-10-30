@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from ..agent import ensure_target
 from ..agent.model import configured
 from ..evidence import capture, read_page, screenshot_dir
-from ..models.schemas import CaptureRequest, CollectRequest, ReportAgentRequest
+from ..models.schemas import CaptureRequest, CollectRequest, DeepRequest, ReportAgentRequest
 from ..platform import Platform
 from ..resolver import entity_view
 from .deps import current_user, get_platform, load_investigation
@@ -35,6 +35,22 @@ async def collect(investigation_id: str, body: CollectRequest,
     run_id = p.agents.start(inv, "collection", body.goal, user, body.max_tool_calls,
                             body.costly_connectors)
     return {"run_id": run_id, "kind": "collection"}
+
+
+@router.post("/investigations/{investigation_id}/deep", status_code=202)
+async def deep(investigation_id: str, body: DeepRequest,
+               p: Platform = Depends(get_platform), user: str = Depends(current_user)):
+    """Deep analysis: an orchestrator dispatches parallel worker agents, then the
+    report agent writes the report (docs/02-architecture.md, mode 4)."""
+    inv = load_investigation(p, investigation_id)
+    _require_claude(p)
+    if body.target and ensure_target(p, inv, body.target, user) is None:
+        raise HTTPException(422, f"could not detect the type of {body.target!r}")
+    if not p.db.one("SELECT 1 AS x FROM targets WHERE investigation_id = ?", (investigation_id,)):
+        raise HTTPException(422, "add a target first (or pass one as 'target')")
+    run_id = p.agents.start(inv, "deep", body.goal, user, body.max_tool_calls,
+                            body.costly_connectors)
+    return {"run_id": run_id, "kind": "deep"}
 
 
 @router.post("/investigations/{investigation_id}/report-agent", status_code=202)

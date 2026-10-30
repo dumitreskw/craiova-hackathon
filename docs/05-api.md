@@ -38,6 +38,8 @@ DELETE /investigations/{id}            delete (soft) + purge evidence job
 POST   /investigations/{id}/targets    add seed + start a quick scan
 POST   /investigations/{id}/collect    start the collection agent {goal, target?, max_tool_calls}
 POST   /investigations/{id}/report-agent  start the report agent {goal, max_tool_calls}
+POST   /investigations/{id}/deep       deep analysis: orchestrator + parallel workers + report
+                                       {goal, target?, max_tool_calls (shared), costly_connectors}
 POST   /investigations/{id}/capture    screenshot a URL as evidence now {url, entity_id?}
 GET    /findings/{fid}/screenshot      the banner-stamped PNG of a capture
 POST   /investigations/{id}/scan       re-run the quick scan {entity_ids?, connectors?, max_depth?}

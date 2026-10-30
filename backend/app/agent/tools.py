@@ -137,6 +137,58 @@ READ_PAGE = _tool(
     ["url"])
 
 
+# Workstreams of a deep analysis: which tools each worker gets, and its brief.
+WORKERS: dict[str, dict] = {
+    "infrastructure": {
+        "tools": ["dns", "rdap", "crtsh", "subfinder", "urlscan", "otx_domain", "otx_ip",
+                  "wayback", "dnstwist", "http_probe"],
+        "focus": "the target's domains and hosting: registration, DNS, subdomains, "
+                 "hosting history, look-alike domains, archived files"},
+    "web_presence": {
+        "tools": ["dork_search", "read_page", "gravatar", "github_user", "wayback"],
+        "focus": "where the target is named or described on the public web: official "
+                 "pages, press, profiles; read the pages, don't rely on snippets"},
+    "people_identity": {
+        "tools": ["hunter", "tomba", "holehe", "maigret", "github_user", "gravatar",
+                  "dork_search", "read_page"],
+        "focus": "the people and accounts connected to the target: staff and roles, "
+                 "email pattern, accounts tied to the target's emails and usernames"},
+    "company_registry": {
+        "tools": ["anaf", "vies", "gleif", "companies_house", "dork_search", "read_page"],
+        "focus": "who the company legally is: registry records, identifiers, addresses, "
+                 "officers, owners and parent companies, status"},
+    "breach_exposure": {
+        "tools": ["hibp", "dehashed"],
+        "focus": "which breaches the target's email addresses appear in and what data "
+                 "classes were exposed (never passwords)"},
+    "legal_screening": {
+        "tools": ["sanctions", "interpol", "europol", "national_wanted", "read_page"],
+        "focus": "sanctions, PEP and wanted-list screening of the person or organisation "
+                 "targets; every name-only hit is an unverified possible match"},
+}
+
+DISPATCH_WORKER = _tool(
+    "dispatch_worker",
+    "Run one specialised worker agent on a workstream and get back its summary with "
+    "finding ids. Several calls in one turn run in parallel.",
+    {"worker": {"type": "string", "enum": sorted(WORKERS)},
+     "goal": {"type": "string", "description": "what this worker should establish"},
+     "budget": {"type": "integer", "minimum": 2, "maximum": 40,
+                "description": "lookups this worker may spend"}},
+    ["worker", "goal", "budget"])
+
+
+def worker_tools(investigation: dict, costly: str, worker: str) -> list[dict]:
+    allowed = set(WORKERS[worker]["tools"])
+    tools = [t for t in connector_tools(investigation, costly)
+             if t["name"] in allowed or t["name"] in ("get_entity", "graph_overview")]
+    return tools
+
+
+def orchestrator_tools() -> list[dict]:
+    return [DISPATCH_WORKER, GRAPH_OVERVIEW]
+
+
 def connector_tools(investigation: dict, costly: str = "metered") -> list[dict]:
     tiers = COST_TIERS.get(costly, COST_TIERS["none"])
     tools = []
@@ -209,6 +261,8 @@ class ToolBox:
     run_id: str
     user: str
     budget: int
+    costly: str = "metered"
+    runner: Any = None  # the AgentRunner, for dispatch_worker
     calls: int = 0
     report_id: str | None = None
     report_ok: bool = False
@@ -423,6 +477,33 @@ class ToolBox:
         return _dump(out)
 
     # --- evidence & report ------------------------------------------------------
+
+    async def _t_dispatch_worker(self, args: dict) -> str:
+        if self.runner is None:
+            raise ToolError("dispatch_worker is only available to the orchestrator")
+        worker = args.get("worker")
+        if worker not in WORKERS:
+            raise ToolError(f"worker must be one of {sorted(WORKERS)}")
+        goal = _str(args, "goal", max_len=2000)
+        try:
+            wanted = int(args.get("budget") or 0)
+        except (TypeError, ValueError) as e:
+            raise ToolError("budget must be an integer") from e
+        remaining = self.budget - self.calls
+        if remaining < 2:
+            raise ToolError("The lookup budget is spent. Write your synthesis now.")
+        budget = max(2, min(wanted, remaining, 40))
+        self.calls += budget
+        child = self.runner.new_run(self.investigation, "worker", f"[{worker}] {goal}",
+                                    self.user, budget)
+        stats = await self.runner.run(child, self.investigation, "worker", goal, self.user,
+                                      budget, self.costly, worker=worker, parent=self.run_id)
+        # Give back what the worker didn't spend.
+        self.calls -= max(0, budget - int(stats.get("tool_calls", 0)))
+        row = self.db.get("agent_runs", child)
+        return _dump({"worker": worker, "run_id": child, "status": row["status"],
+                      "lookups": stats.get("tool_calls"), "findings": stats.get("findings"),
+                      "summary": (row["summary"] or "")[:4000]})
 
     async def _t_read_page(self, args: dict) -> str:
         url = _str(args, "url", max_len=2000)

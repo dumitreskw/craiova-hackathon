@@ -82,6 +82,23 @@ export function AgentsPanel({ investigation, events }: { investigation: Investig
     }
   }
 
+  async function deepAnalysis() {
+    setBusy("deep");
+    setError(null);
+    try {
+      await api.post(`/investigations/${investigation.id}/deep`, {
+        target: target.trim() || undefined,
+        goal: goal.trim(),
+        max_tool_calls: Math.max(6, maxCalls),
+        costly_connectors: costly,
+      });
+    } catch (err) {
+      setError(explain(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function writeReport(e: FormEvent) {
     e.preventDefault();
     setBusy("report");
@@ -132,6 +149,11 @@ export function AgentsPanel({ investigation, events }: { investigation: Investig
           </div>
           <button className="btn btn-primary" disabled={busy !== null || !goal.trim()}>
             {busy === "collect" ? "Starting…" : "Start collection"}
+          </button>
+          <button type="button" className="btn" disabled={busy !== null || !goal.trim()}
+            onClick={deepAnalysis}
+            title="Claude plans the work, runs specialised workers in parallel, then writes the report">
+            {busy === "deep" ? "Starting…" : "Deep analysis"}
           </button>
         </div>
       </form>

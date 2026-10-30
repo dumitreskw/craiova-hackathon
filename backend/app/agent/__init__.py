@@ -30,25 +30,29 @@ from ..resolver import entity_view
 from ..scan import anchor_domains
 from . import prompts
 from .model import ModelClient, echo_content
-from .tools import ToolBox, connector_tools, report_tools
+from .tools import WORKERS, ToolBox, connector_tools, orchestrator_tools, report_tools, worker_tools
 
 EXTRA_TURNS = 15          # turns allowed beyond the tool budget (thinking, retries, final text)
 MAX_JSON_RETRIES = 2
+DEEP_REPORT_CAPTURES = 6  # evidence captures the report agent may take after a deep analysis
 
 
 class AgentRunner:
-    def __init__(self, ledger: Ledger, model_factory: Callable[[], ModelClient]):
+    def __init__(self, ledger: Ledger, model_factory: Callable[[], ModelClient],
+                 worker_model_factory: Callable[[], ModelClient] | None = None):
         self.ledger = ledger
         self.db = ledger.db
         self.bus = ledger.bus
         self.model_factory = model_factory
+        # Deep-analysis workers may run on a cheaper model (docs/02, "Models").
+        self.worker_model_factory = worker_model_factory or model_factory
         self.model_factory_is_default = False
         self.tasks: dict[str, asyncio.Task] = {}
 
     # --- lifecycle --------------------------------------------------------------
 
-    def start(self, investigation: dict, kind: str, goal: str, user: str,
-              max_tool_calls: int, costly: str = "metered") -> str:
+    def new_run(self, investigation: dict, kind: str, goal: str, user: str,
+                max_tool_calls: int) -> str:
         run_id = new_id("ar")
         self.db.insert("agent_runs", {
             "id": run_id, "investigation_id": investigation["id"], "kind": kind,
@@ -58,6 +62,11 @@ class AgentRunner:
         self.db.audit(user=user, action=f"agent.{kind}.start",
                       investigation_id=investigation["id"],
                       detail={"run_id": run_id, "goal": goal, "max_tool_calls": max_tool_calls})
+        return run_id
+
+    def start(self, investigation: dict, kind: str, goal: str, user: str,
+              max_tool_calls: int, costly: str = "metered") -> str:
+        run_id = self.new_run(investigation, kind, goal, user, max_tool_calls)
         task = asyncio.create_task(self.run(run_id, investigation, kind, goal, user,
                                             max_tool_calls, costly))
         self.tasks[run_id] = task
@@ -74,21 +83,29 @@ class AgentRunner:
     # --- the loop -----------------------------------------------------------------
 
     async def run(self, run_id: str, investigation: dict, kind: str, goal: str, user: str,
-                  max_tool_calls: int, costly: str = "metered") -> dict:
+                  max_tool_calls: int, costly: str = "metered", worker: str | None = None,
+                  parent: str | None = None) -> dict:
         inv_id = investigation["id"]
-        box = ToolBox(self.ledger, investigation, run_id, user, budget=max_tool_calls)
+        box = ToolBox(self.ledger, investigation, run_id, user, budget=max_tool_calls,
+                      costly=costly, runner=self if kind == "deep" else None)
         if kind == "collection":
             system, tools, effort = (prompts.COLLECTION, connector_tools(investigation, costly),
                                      "medium")
+        elif kind == "worker":
+            system, tools, effort = (prompts.WORKER, worker_tools(investigation, costly, worker),
+                                     "medium")
+        elif kind == "deep":
+            system, tools, effort = prompts.ORCHESTRATOR, orchestrator_tools(), "medium"
         else:
             system, tools, effort = prompts.REPORT, report_tools(), "high"
-        messages: list[dict] = [{"role": "user", "content": self._brief(investigation, kind,
-                                                                         goal, max_tool_calls)}]
+        messages: list[dict] = [{"role": "user", "content": self._brief(
+            investigation, kind, goal, max_tool_calls, worker)}]
         transcript: list[dict] = []
         usage: Counter[str] = Counter()
         status, summary = "finished", ""
-        model = self.model_factory()
-        self.bus.publish(inv_id, "agent.started", {"run_id": run_id, "kind": kind, "goal": goal})
+        model = self.worker_model_factory() if kind == "worker" else self.model_factory()
+        self.bus.publish(inv_id, "agent.started", {"run_id": run_id, "kind": kind, "goal": goal,
+                                                   "worker": worker, "parent": parent})
 
         def on_delta(kind_: str, chunk: str) -> None:
             event = "agent.text" if kind_ == "text" else "agent.update"
@@ -160,6 +177,17 @@ class AgentRunner:
             status, summary = "failed", f"{type(e).__name__}: {e}"[:1000]
             self.bus.publish(inv_id, "agent.failed", {"run_id": run_id, "error": summary})
 
+        report_run = None
+        if kind == "deep" and status == "finished":
+            # Hand the collected graph to the report agent (docs/02, deep analysis);
+            # save the synthesis first so the report agent's brief includes it.
+            self.db.update("agent_runs", run_id, {"summary": summary})
+            report_run = self.new_run(investigation, "report", goal, user, DEEP_REPORT_CAPTURES)
+            rstats = await self.run(report_run, investigation, "report", goal, user,
+                                    DEEP_REPORT_CAPTURES, costly, parent=run_id)
+            box.report_id = rstats.get("report_id")
+            box.report_ok = self.db.get("agent_runs", report_run)["status"] == "finished"
+
         if kind == "report" and status == "finished" and not box.report_ok:
             status = "failed"
             summary = (summary + "\n\n" if summary else "") + (
@@ -167,6 +195,12 @@ class AgentRunner:
                 f"Report {box.report_id} still has lint errors; review it before export.")
         stats = {**usage, "tool_calls": box.calls, "findings": len(box.findings),
                  "report_id": box.report_id}
+        if worker:
+            stats["worker"] = worker
+        if parent:
+            stats["parent"] = parent
+        if report_run:
+            stats["report_run"] = report_run
         self.db.update("agent_runs", run_id, {"status": status, "summary": summary,
                                               "stats": stats, "transcript": transcript,
                                               "finished_at": now()})
@@ -180,7 +214,8 @@ class AgentRunner:
 
     # --- helpers --------------------------------------------------------------------
 
-    def _brief(self, inv: dict, kind: str, goal: str, budget: int) -> str:
+    def _brief(self, inv: dict, kind: str, goal: str, budget: int,
+               worker: str | None = None) -> str:
         targets = self.db.query("SELECT value, type FROM targets WHERE investigation_id = ? "
                                 "ORDER BY created_at", (inv["id"],))
         anchors = anchor_domains(self.db, inv["id"], [])
@@ -194,17 +229,24 @@ class AgentRunner:
         ]
         if anchors:
             lines.append("The target's own domains: " + ", ".join(anchors))
-        lines += [f"Goal: {goal}", f"Tool budget: {budget} calls."]
+        if kind == "worker":
+            lines.append(f"Your workstream: {worker} — {WORKERS[worker]['focus']}.")
+        lines += [f"Goal: {goal}", f"Tool budget: {budget} "
+                  + ("lookups in total across all workers." if kind == "deep" else "calls.")]
+        if kind == "deep":
+            lines.append("Workers: " + "; ".join(f"{k} ({v['focus']})"
+                                                 for k, v in sorted(WORKERS.items())))
         if kind == "report":
             runs = self.db.query(
-                "SELECT goal, summary FROM agent_runs WHERE investigation_id = ? AND "
-                "kind = 'collection' AND status = 'finished' AND summary IS NOT NULL "
-                "ORDER BY started_at DESC LIMIT 3", (inv["id"],))
+                "SELECT kind, goal, summary FROM agent_runs WHERE investigation_id = ? AND "
+                "kind IN ('collection', 'worker', 'deep') AND summary IS NOT NULL AND "
+                "summary != '' AND (status = 'finished' OR kind = 'deep') "
+                "ORDER BY started_at DESC LIMIT 8", (inv["id"],))
             for r in runs:
-                lines.append(f"\nCollection agent notes (goal: {r['goal']}). These are "
-                             "leads that cite finding ids; verify against the findings "
-                             f"before you rely on them:\n{r['summary'][:6000]}")
-        if kind == "collection":
+                lines.append(f"\n{r['kind'].title()} agent notes (goal: {r['goal']}). These "
+                             "are leads that cite finding ids; verify against the findings "
+                             f"before you rely on them:\n{r['summary'][:5000]}")
+        if kind in ("collection", "worker", "deep"):
             lines.append("Use graph_overview to see what earlier scans already found.")
         else:
             lines.append("Write the report for this goal from the investigation graph.")

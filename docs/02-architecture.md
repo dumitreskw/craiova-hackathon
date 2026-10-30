@@ -217,6 +217,14 @@ breach lookups, recon) can run on `claude-sonnet-5-5` to keep a deep run
 affordable. For the demo, a single deep analysis is a handful of worker runs,
 so this stays well within budget.
 
+> **Status: built.** `POST /investigations/{id}/deep`. Workers: infrastructure,
+> web_presence, people_identity, company_registry, breach_exposure,
+> legal_screening (`app/agent/tools.py` `WORKERS`), each limited to its own
+> tools, sharing one lookup budget; the orchestrator runs on
+> `OSINT_AGENT_MODEL` (Opus 5.5), workers on `OSINT_WORKER_MODEL` (Sonnet 5.5),
+> and the report agent runs automatically at the end. Live test on emag.ro:
+> 4 parallel workers + 1 follow-up, 27 lookups, report in 214 s.
+>
 > **Build note.** This is the ambitious mode. For the hackathon, build modes 1–3
 > first; the orchestrator is a natural extension once the worker agents and the
 > MCP tools exist, since each worker is just the collection agent with a

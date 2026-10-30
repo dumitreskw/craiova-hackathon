@@ -22,8 +22,12 @@ class Platform:
         self.ledger = Ledger(self.db, self.bus, self.settings)
         self.resolver = self.ledger.resolver
         self.scan = QuickScan(self.ledger)
-        self.agents = AgentRunner(self.ledger, model_factory or (lambda: AnthropicModel(
-            self.settings.agent_model, self.settings.agent_progress_updates)))
+        self.agents = AgentRunner(
+            self.ledger,
+            model_factory or (lambda: AnthropicModel(
+                self.settings.agent_model, self.settings.agent_progress_updates)),
+            None if model_factory else (lambda: AnthropicModel(
+                self.settings.worker_model, self.settings.agent_progress_updates)))
         self.agents.model_factory_is_default = model_factory is None
 
     def close(self) -> None:

@@ -123,3 +123,11 @@ class ReportAgentRequest(BaseModel):
 class CaptureRequest(BaseModel):
     url: str = Field(min_length=8, max_length=2000)
     entity_id: str | None = None
+
+
+class DeepRequest(BaseModel):
+    goal: str = Field(min_length=5, max_length=2000)
+    target: str | None = Field(None, max_length=500)
+    max_tool_calls: int = Field(60, ge=6, le=250,
+                                description="lookups shared by all workers")
+    costly_connectors: Literal["none", "metered", "all"] = "metered"
