@@ -1,0 +1,96 @@
+# OSINT platform on a Coolify server (Coolify's proxy owns 80/443 and TLS).
+#
+# In Coolify: New resource -> Public repository
+#   https://github.com/dumitreskw/craiova-hackathon  (branch main)
+#   Build pack: Docker Compose, compose file: /docker-compose.coolify.yml
+#   Domain for the "gateway" service: https://osint.<your-domain>
+#   Environment: paste the variables from .env.example (secrets marked secret).
+#
+# Differences from docker-compose.yml: no published ports, and the internal
+# Caddy ("gateway") speaks plain HTTP behind Coolify's proxy while still doing
+# the basic-auth login, the X-Analyst audit identity, /mcp routing and SSE.
+
+services:
+  gateway:
+    image: caddy:2.8.4
+    restart: unless-stopped
+    expose:
+      - "80"
+    environment:
+      OSINT_BASIC_AUTH_USER: ${OSINT_BASIC_AUTH_USER:?set OSINT_BASIC_AUTH_USER}
+      OSINT_BASIC_AUTH_HASH: ${OSINT_BASIC_AUTH_HASH:?set OSINT_BASIC_AUTH_HASH}
+    volumes:
+      - ./Caddyfile.coolify:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - app
+
+  app:
+    build: .
+    image: osint-platform:latest
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      OSINT_DATA_DIR: /data
+      SEARXNG_URL: http://searxng:8080
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OSINT_AGENT_MODEL: ${OSINT_AGENT_MODEL:-claude-opus-5-5}
+      OSINT_WORKER_MODEL: ${OSINT_WORKER_MODEL:-claude-sonnet-5-5}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      OPENSANCTIONS_API_KEY: ${OPENSANCTIONS_API_KEY:-}
+      OTX_API_KEY: ${OTX_API_KEY:-}
+      URLSCAN_API_KEY: ${URLSCAN_API_KEY:-}
+      CERTSPOTTER_API_KEY: ${CERTSPOTTER_API_KEY:-}
+      DNSDUMPSTER_API_KEY: ${DNSDUMPSTER_API_KEY:-}
+      NETLAS_API_KEY: ${NETLAS_API_KEY:-}
+      CHAOS_API_KEY: ${CHAOS_API_KEY:-}
+      WHOISXML_API_KEY: ${WHOISXML_API_KEY:-}
+      HUNTER_API_KEY: ${HUNTER_API_KEY:-}
+      TOMBA_API_KEY: ${TOMBA_API_KEY:-}
+      TOMBA_API_SECRET: ${TOMBA_API_SECRET:-}
+      DEHASHED_API_KEY: ${DEHASHED_API_KEY:-}
+      COMPANIES_HOUSE_API_KEY: ${COMPANIES_HOUSE_API_KEY:-}
+      HIBP_API_KEY: ${HIBP_API_KEY:-}
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      OSINT_EGRESS_LABEL: ${OSINT_EGRESS_LABEL:-coolify}
+      OSINT_RETENTION_DAYS: ${OSINT_RETENTION_DAYS:-90}
+    volumes:
+      - osint_data:/data
+    shm_size: "512m"
+    depends_on:
+      - searxng
+
+  searxng:
+    image: searxng/searxng:2026.10.30-ffa88e3ba
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?set SEARXNG_SECRET}
+      SEARXNG_BASE_URL: http://searxng:8080/
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETGID", "SETUID"]
+
+  mcp:
+    image: osint-platform:latest
+    restart: unless-stopped
+    command: ["python", "mcp_server.py"]
+    expose:
+      - "8787"
+    environment:
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8787"
+      MCP_ALLOW_ACTIVE: "0"
+      SEARXNG_URL: http://searxng:8080
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      OPENSANCTIONS_API_KEY: ${OPENSANCTIONS_API_KEY:-}
+    depends_on:
+      - app
+    healthcheck:
+      disable: true
+
+volumes:
+  osint_data:

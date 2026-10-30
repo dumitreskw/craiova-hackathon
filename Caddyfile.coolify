@@ -1,0 +1,33 @@
+# Internal gateway behind Coolify's proxy (Coolify terminates TLS).
+# Same login, audit identity and routing as the standalone Caddyfile.
+{
+	auto_https off
+	admin off
+}
+
+:80 {
+	encode zstd gzip
+
+	basic_auth {
+		{$OSINT_BASIC_AUTH_USER} {$OSINT_BASIC_AUTH_HASH}
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	handle /mcp* {
+		reverse_proxy mcp:8787
+	}
+
+	handle {
+		reverse_proxy app:8000 {
+			# The audit log's "who": the authenticated user, never a client header.
+			header_up X-Analyst {http.auth.user.id}
+			flush_interval -1
+		}
+	}
+}

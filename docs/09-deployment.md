@@ -39,6 +39,28 @@ flowchart LR
 Only Caddy publishes ports (80/443). The app and MCP server are reachable
 only through it.
 
+## On a Coolify server
+
+Coolify's own proxy owns ports 80/443 and the certificates, so use
+`docker-compose.coolify.yml`: the same stack without published ports, with
+the internal Caddy (`gateway`) speaking plain HTTP behind Coolify's proxy
+while keeping the login, the `X-Analyst` audit identity, `/mcp` and SSE.
+
+1. Coolify → **New resource** → **Public repository** →
+   `https://github.com/dumitreskw/craiova-hackathon`, branch `main`.
+2. Build pack **Docker Compose**, compose file `/docker-compose.coolify.yml`.
+3. **Domains**: give the `gateway` service `https://osint.<your-domain>`
+   (leave app, searxng and mcp without domains: they stay internal).
+4. **Environment variables**: the keys from `.env.example`, at least
+   `OSINT_BASIC_AUTH_USER`, `OSINT_BASIC_AUTH_HASH` (from
+   `caddy hash-password`; no `$$` escaping needed in Coolify),
+   `SEARXNG_SECRET`, `ANTHROPIC_API_KEY`. Mark keys as secrets.
+5. **Deploy.** The first build takes a few minutes (Chromium, tools).
+
+Needs about 4 GB of free RAM on the server alongside what Coolify already
+runs. Tested locally with a stand-in for Coolify's proxy: login, audit
+identity, MCP and SearXNG all work.
+
 ## One-command deploy
 
 From the repo, with `.env` filled in (domain, basic-auth user + hash,
