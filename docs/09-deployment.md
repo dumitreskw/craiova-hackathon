@@ -39,6 +39,19 @@ flowchart LR
 Only Caddy publishes ports (80/443). The app and MCP server are reachable
 only through it.
 
+## One-command deploy
+
+From the repo, with `.env` filled in (domain, basic-auth user + hash,
+SEARXNG_SECRET, API keys):
+
+```bash
+scripts/deploy.sh root@<server-ip>      # re-run it to update
+```
+
+It ships the committed code with `git archive` (no GitHub access needed on
+the server), copies `.env`, installs Docker if missing, opens only 22/80/443,
+and runs `docker compose up -d --build`. The manual steps below do the same.
+
 ## First deploy
 
 Sizing: 2 vCPU / 4 GB RAM / 40 GB disk is enough (Chromium is the largest
