@@ -16,13 +16,14 @@ graph by pivoting recursively on everything it finds.
 6. [Legal, Ethics & Safety](docs/06-legal-ethics.md): GDPR, passive-first, guardrails
 7. [Hackathon MVP Plan](docs/07-mvp-plan.md): scope, team split, timeline, risks
 8. [Lessons from Field Casework](docs/08-field-lessons.md): what went wrong in real OSINT reports and how the platform prevents it
-9. [Deployment & Infrastructure](docs/09-deployment.md): docker compose stack, Caddy, VPN egress, MCP access, backups, CI
+9. [Deployment & Infrastructure](docs/09-deployment.md): docker compose stack, Coolify, VPN egress, MCP access, backups, CI
+10. [Accounts, sign-in and workspaces](docs/10-auth.md): Keycloak, roles, invitations, API keys, plans
 
 ## Run it
 
 ```bash
-# whole stack (Caddy + app + UI + MCP), see docs/09-deployment.md
-cp .env.example .env        # set OSINT_DOMAIN, basic-auth user/hash, ANTHROPIC_API_KEY
+# whole stack (app + UI + MCP; sign-in via Keycloak), see docs/09-deployment.md, docs/10-auth.md
+cp .env.example .env        # set OSINT_DOMAIN, OSINT_OIDC_* (Keycloak), ANTHROPIC_API_KEY
 docker compose up -d --build
 
 # or for development
@@ -35,4 +36,5 @@ cd ../frontend && npm install && npm run dev     # UI on :5173, proxies /api
 |---|---|
 | `backend/` | FastAPI app, connectors, Claude agents, MCP server ([README](backend/README.md)) |
 | `frontend/` | React + Cytoscape analyst UI ([README](frontend/README.md)) |
-| `Dockerfile`, `docker-compose.yml`, `Caddyfile` | Deployment |
+| `Dockerfile`, `docker-compose*.yml`, `Caddyfile` | Deployment |
+| `deploy/keycloak/`, `scripts/keycloak_bootstrap.py` | Identity provider and its realm setup |

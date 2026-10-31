@@ -3,31 +3,16 @@
 # In Coolify: New resource -> Public repository
 #   https://github.com/dumitreskw/craiova-hackathon  (branch main)
 #   Build pack: Docker Compose, compose file: /docker-compose.coolify.yml
-#   Domain for the "gateway" service: https://osint.<your-domain>
+#   Domain for the "app" service: https://osint.<your-domain>
 #   Environment: paste the variables from .env.example (secrets marked secret).
 #
-# Differences from docker-compose.yml: no published ports, configs baked into
-# images (no bind mounts), and the internal Caddy ("gateway") speaks plain
-# HTTP behind Coolify's proxy while still doing the basic-auth login, the
-# X-Analyst audit identity, /mcp routing and SSE. OSINT_BASIC_AUTH_HASH may be
-# base64-encoded (no "$" for the env file to mangle).
+# Sign-in is Keycloak (its own Coolify resource, deploy/keycloak/) and the app
+# itself: no gateway in front. Coolify's proxy sends everything to "app", which
+# serves the public landing page, the analyst app, /auth/* (OpenID Connect) and
+# /mcp (forwarded to the internal MCP server after checking an API key or a
+# session). See docs/10-auth.md.
 
 services:
-  gateway:
-    # Config baked into the image: Coolify runs the stack without the repo
-    # checkout, so bind-mounting repo files would mount empty directories.
-    build:
-      context: .
-      dockerfile: docker/gateway.Dockerfile
-    restart: unless-stopped
-    expose:
-      - "80"
-    environment:
-      OSINT_BASIC_AUTH_USER: ${OSINT_BASIC_AUTH_USER:?set OSINT_BASIC_AUTH_USER}
-      OSINT_BASIC_AUTH_HASH: ${OSINT_BASIC_AUTH_HASH:?set OSINT_BASIC_AUTH_HASH}
-    depends_on:
-      - app
-
   app:
     build:
       context: .
@@ -39,6 +24,13 @@ services:
       - "8000"
     environment:
       OSINT_DATA_DIR: /data
+      # Sign-in (docs/10-auth.md): the Keycloak realm and the app's client.
+      OSINT_OIDC_ISSUER: ${OSINT_OIDC_ISSUER:?set OSINT_OIDC_ISSUER (https://auth.<domain>/realms/osint)}
+      OSINT_OIDC_CLIENT_ID: ${OSINT_OIDC_CLIENT_ID:-osint-web}
+      OSINT_OIDC_CLIENT_SECRET: ${OSINT_OIDC_CLIENT_SECRET:?set OSINT_OIDC_CLIENT_SECRET}
+      OSINT_PUBLIC_URL: ${OSINT_PUBLIC_URL:?set OSINT_PUBLIC_URL (https://osint.<domain>)}
+      OSINT_DEFAULT_PLAN: ${OSINT_DEFAULT_PLAN:-free}
+      OSINT_MCP_UPSTREAM: http://mcp:8787
       # Build id at runtime too, when the platform only sets SOURCE_COMMIT for
       # the container (Coolify: "Include Source Commit in Build").
       OSINT_BUILD: ${SOURCE_COMMIT:-}

@@ -104,7 +104,7 @@ async def client(platform):
     app.state.platform = platform  # ASGITransport does not run the lifespan
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test/api/v1",
-                                 headers={"X-Analyst": "ana"}) as c:
+                                 headers={"X-Analyst": "spoofed"}) as c:
         yield c
 
 
@@ -162,7 +162,7 @@ async def test_api_end_to_end(client, platform):
     actions = {a["action"] for a in audit}
     assert {"investigation.create", "target.add", "connector.call", "report.create",
             "report.render"} <= actions
-    assert all(a["user"] == "ana" for a in audit if a["action"] != "connector.call")
+    assert all(a["user"] == "analyst" for a in audit if a["action"] != "connector.call")
 
 
 async def test_api_pivot_refuses_candidates_and_confirm_needs_reason(client, platform):

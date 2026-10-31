@@ -19,7 +19,10 @@ from ..models.schemas import (
 from ..platform import Platform
 from ..resolver import entity_view
 from ..retention import purge_investigation
-from .deps import current_user, get_platform, load_investigation
+from ..auth.context import Principal
+from ..auth.middleware import get_auth
+from ..auth.store import TenancyError
+from .deps import current_user, get_platform, load_investigation, require_org
 
 router = APIRouter(tags=["investigations"])
 
@@ -36,14 +39,20 @@ def _public(inv: dict) -> dict:
 
 
 @router.post("/investigations", status_code=201)
-async def create_investigation(body: InvestigationCreate, p: Platform = Depends(get_platform),
-                               user: str = Depends(current_user)):
+async def create_investigation(body: InvestigationCreate, request: Request,
+                               p: Platform = Depends(get_platform),
+                               user: str = Depends(current_user),
+                               who: Principal = Depends(require_org)):
+    try:
+        get_auth(request.app).store.check_limit(who.org_id, "investigations")
+    except TenancyError as e:
+        raise HTTPException(e.status, str(e)) from e
     inv = {
         "id": new_id("inv"), "name": body.name, "purpose": body.purpose,
         "mode": body.mode,
         "settings": body.settings.model_dump(),
         "retention_days": body.retention_days or p.settings.retention_days,
-        "legal_hold": 0, "created_by": user, "created_at": now(),
+        "legal_hold": 0, "created_by": user, "created_at": now(), "org_id": who.org_id,
     }
     p.db.insert("investigations", inv)
     p.db.audit(user=user, action="investigation.create", investigation_id=inv["id"],
@@ -52,9 +61,10 @@ async def create_investigation(body: InvestigationCreate, p: Platform = Depends(
 
 
 @router.get("/investigations")
-async def list_investigations(p: Platform = Depends(get_platform)):
-    rows = p.db.query("SELECT * FROM investigations WHERE deleted_at IS NULL "
-                      "ORDER BY created_at DESC")
+async def list_investigations(p: Platform = Depends(get_platform),
+                              who: Principal = Depends(require_org)):
+    rows = p.db.query("SELECT * FROM investigations WHERE deleted_at IS NULL AND org_id = ? "
+                      "ORDER BY created_at DESC", (who.org_id,))
     return [{**_public(r), "stats": _stats(p, r["id"])} for r in rows]
 
 
@@ -140,6 +150,7 @@ async def get_run(run_id: str, p: Platform = Depends(get_platform)):
     run = p.db.get("agent_runs", run_id)
     if run is None:
         raise HTTPException(404, "run not found")
+    load_investigation(p, run["investigation_id"])
     return run
 
 
@@ -149,6 +160,7 @@ async def cancel_run(run_id: str, p: Platform = Depends(get_platform),
     run = p.db.get("agent_runs", run_id)
     if run is None:
         raise HTTPException(404, "run not found")
+    load_investigation(p, run["investigation_id"])
     cancelled = p.scan.cancel(run_id) or p.agents.cancel(run_id)
     p.db.audit(user=user, action="run.cancel", investigation_id=run["investigation_id"],
                detail={"run_id": run_id, "was_running": cancelled})

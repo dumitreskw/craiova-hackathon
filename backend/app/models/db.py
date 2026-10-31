@@ -247,6 +247,94 @@ CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit
     BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 
+-- --- Accounts and tenancy (app/auth) -------------------------------------------
+-- Identities live in Keycloak; a user row mirrors one (``sub``) and holds what
+-- the platform needs: workspace memberships and the platform-admin flag.
+CREATE TABLE IF NOT EXISTS users (
+    id               TEXT PRIMARY KEY,
+    sub              TEXT NOT NULL UNIQUE,                -- Keycloak user id
+    email            TEXT NOT NULL,
+    name             TEXT NOT NULL DEFAULT '',
+    platform_admin   INTEGER NOT NULL DEFAULT 0,          -- Keycloak realm role platform-admin
+    default_org_id   TEXT,
+    created_at       TEXT NOT NULL,
+    last_login_at    TEXT
+);
+
+-- A workspace (tenant). Investigations, audit, members and API keys belong to one.
+CREATE TABLE IF NOT EXISTS orgs (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    plan             TEXT NOT NULL DEFAULT 'free',        -- see app/auth/plans.py
+    created_by       TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    disabled_at      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS memberships (
+    org_id           TEXT NOT NULL REFERENCES orgs(id),
+    user_id          TEXT NOT NULL REFERENCES users(id),
+    role             TEXT NOT NULL,                       -- owner | admin | analyst | viewer
+    created_at       TEXT NOT NULL,
+    PRIMARY KEY (org_id, user_id)
+);
+
+-- Single-use invitation links; only the token's sha256 is stored.
+CREATE TABLE IF NOT EXISTS invitations (
+    id               TEXT PRIMARY KEY,
+    org_id           TEXT NOT NULL REFERENCES orgs(id),
+    email            TEXT NOT NULL,
+    role             TEXT NOT NULL,
+    token_hash       TEXT NOT NULL UNIQUE,
+    created_by       TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    expires_at       TEXT NOT NULL,
+    accepted_by      TEXT,
+    accepted_at      TEXT,
+    revoked_at       TEXT
+);
+
+-- Browser sessions (HttpOnly cookie). ``id`` is the sha256 of the cookie value;
+-- the Keycloak refresh token lets the app notice a disabled account or a
+-- logout elsewhere within minutes.
+CREATE TABLE IF NOT EXISTS sessions (
+    id               TEXT PRIMARY KEY,
+    user_id          TEXT NOT NULL REFERENCES users(id),
+    org_id           TEXT,
+    id_token         TEXT,
+    refresh_token    TEXT,
+    created_at       TEXT NOT NULL,
+    last_seen_at     TEXT NOT NULL,
+    checked_at       TEXT NOT NULL,
+    expires_at       TEXT NOT NULL
+);
+
+-- Workspace API keys (REST API and the /mcp endpoint). Only the sha256 is stored.
+CREATE TABLE IF NOT EXISTS api_keys (
+    id               TEXT PRIMARY KEY,
+    org_id           TEXT NOT NULL REFERENCES orgs(id),
+    user_id          TEXT NOT NULL REFERENCES users(id),
+    name             TEXT NOT NULL,
+    prefix           TEXT NOT NULL,                       -- first characters, for display
+    key_hash         TEXT NOT NULL UNIQUE,
+    role             TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    last_used_at     TEXT,
+    revoked_at       TEXT
+);
+
+-- In-flight sign-ins: OAuth state -> PKCE verifier, nonce, where to go after.
+CREATE TABLE IF NOT EXISTS auth_states (
+    id               TEXT PRIMARY KEY,                    -- the OAuth state value
+    verifier         TEXT NOT NULL,
+    nonce            TEXT NOT NULL,
+    next             TEXT NOT NULL,
+    created_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_memberships_user ON memberships(user_id);
+CREATE INDEX IF NOT EXISTS ix_sessions_user ON sessions(user_id);
+
 CREATE INDEX IF NOT EXISTS ix_findings_inv ON findings(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_entities_inv ON entities(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_edges_inv ON edges(investigation_id);
@@ -267,6 +355,11 @@ MIGRATIONS = [
     ("social_jobs", "platform", "TEXT"),
     ("agent_runs", "transcript", "TEXT NOT NULL DEFAULT '[]'"),
     ("agent_runs", "model", "TEXT"),
+    # Tenancy: the workspace an investigation / audit row belongs to. Rows from
+    # before accounts existed have NULL and are claimed by the first platform
+    # admin's workspace (app/auth/store.py).
+    ("investigations", "org_id", "TEXT"),
+    ("audit", "org_id", "TEXT"),
 ]
 
 # Columns removed after a release: (table, column). Dropped on open, so an
@@ -312,6 +405,10 @@ class Database:
             cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             if column in cols:
                 self.conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        # Indexes on migrated columns: only once the column exists.
+        self.conn.execute("CREATE INDEX IF NOT EXISTS ix_investigations_org "
+                          "ON investigations(org_id, created_at)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS ix_audit_org ON audit(org_id, ts)")
         self.conn.commit()
 
     def close(self) -> None:
@@ -360,11 +457,22 @@ class Database:
 
     def audit(self, *, user: str, action: str, outcome: str = "ok",
               investigation_id: str | None = None, connector: str | None = None,
-              target: str | None = None, detail: dict | None = None) -> None:
+              target: str | None = None, detail: dict | None = None,
+              org_id: str | None = None) -> None:
+        if org_id is None and investigation_id:
+            row = self.conn.execute("SELECT org_id FROM investigations WHERE id = ?",
+                                    (investigation_id,)).fetchone()
+            org_id = row[0] if row else None
+        if org_id is None:
+            # The workspace of whoever is acting (set per request, inherited by
+            # the scans and agents a request starts).
+            from ..auth.context import current_principal
+            principal = current_principal()
+            org_id = principal.org_id if principal else None
         self.insert("audit", {
             "ts": now(), "user": user, "action": action, "outcome": outcome,
             "investigation_id": investigation_id, "connector": connector,
-            "target": target, "detail": detail or {},
+            "target": target, "detail": detail or {}, "org_id": org_id,
         })
 
 

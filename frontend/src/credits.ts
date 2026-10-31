@@ -10,7 +10,7 @@ import type { Tone } from "./components/ui";
 interface State {
   data: CreditEntry[] | null;
   error: unknown;
-  missing: boolean; // the server has no /credits endpoint
+  missing: boolean; // no /credits endpoint, or not a platform admin
   loading: boolean;
   at: number;
 }
@@ -31,7 +31,8 @@ export async function loadCredits(refresh = false): Promise<void> {
     const data = await api.get<CreditEntry[]>(`/credits${refresh ? "?refresh=true" : ""}`);
     set({ data, error: null, missing: false, loading: false, at: Date.now() });
   } catch (e) {
-    const missing = e instanceof ApiError && e.status === 404;
+    // 403: balances of the platform's provider accounts are for platform admins.
+    const missing = e instanceof ApiError && (e.status === 404 || e.status === 403);
     set({ error: missing ? null : e, missing, loading: false, at: Date.now() });
   }
 }

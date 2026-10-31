@@ -148,7 +148,7 @@ async def client(agent_platform):
     app.state.platform = agent_platform
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                  base_url="http://test/api/v1",
-                                 headers={"X-Analyst": "ana"}) as c:
+                                 headers={"X-Analyst": "spoofed"}) as c:
         yield c
 
 
@@ -169,5 +169,5 @@ async def test_api_verify_and_reviews(client, agent_platform):
     # An analyst confirmation is recorded as a review and shown on the entity.
     await client.post(f"/entities/{noc}/confirm", json={"reason": "their own mailbox"})
     ent = (await client.get(f"/entities/{noc}")).json()
-    assert ent["status"] == "confirmed" and ent["reviews"][-1]["reviewer"] == "ana"
+    assert ent["status"] == "confirmed" and ent["reviews"][-1]["reviewer"] == "analyst"
     assert not ent["reviews"][-1]["by_agent"]

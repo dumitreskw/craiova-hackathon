@@ -1,7 +1,9 @@
 # 5. API (draft)
 
-Base path: `/api/v1`. JSON everywhere. Auth: `Authorization: Bearer <jwt>` (target);
-the MVP sits behind Caddy basic auth and reads the analyst from `X-Analyst`.
+Base path: `/api/v1`. JSON everywhere. Auth (docs/10-auth.md): the browser's
+session cookie, a workspace API key (`Authorization: Bearer osk_…`) or a
+Keycloak access token. Every request acts in one workspace; account and
+workspace endpoints are `/me`, `/orgs/current/...` and `/platform/orgs`.
 
 ## Investigations
 

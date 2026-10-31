@@ -29,7 +29,7 @@ a persona is never exposed on the wrong IP.
 Config via environment (see kali-worker/osint-worker.env.example):
     OSINT_PLATFORM_URL   https://osint.dumisoft.ro
     OSINT_WORKER_TOKEN   shared secret, matches the platform's OSINT_WORKER_TOKEN
-    OSINT_BASIC_AUTH     user:pass for the platform's Caddy basic-auth (if any)
+    OSINT_BASIC_AUTH     user:pass, only if a proxy in front of the platform asks (optional)
     OSINT_PERSONA_DIR    where persona browser profiles live (default ~/personas)
     OSINT_REQUIRE_VPN    "1" (default) refuse jobs unless Mullvad is connected
     OSINT_WORKER_HEADFUL_DISPLAY  X display for login jobs (default ":0")

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import Header, HTTPException, Request
+from fastapi import HTTPException, Request
 
+from ..auth.context import Principal, current_principal
 from ..platform import Platform
 
 
@@ -9,18 +10,51 @@ def get_platform(request: Request) -> Platform:
     return request.app.state.platform
 
 
-def current_user(x_analyst: str | None = Header(None)) -> str:
-    """Who is acting, for the audit log.
+def get_principal() -> Principal:
+    """The signed-in caller (the auth middleware guarantees one on /api)."""
+    p = current_principal()
+    if p is None:
+        raise HTTPException(401, "Not signed in.")
+    return p
 
-    Caddy's basic auth sets ``X-Analyst`` from the authenticated user
-    (``header_up X-Analyst {http.auth.user.id}``); local runs fall back to "analyst".
-    """
-    return (x_analyst or "analyst").strip()[:100]
+
+def current_user() -> str:
+    """Who is acting, for the audit log: the signed-in account, never a client header."""
+    return get_principal().label
+
+
+def require_org() -> Principal:
+    """A caller acting inside a workspace."""
+    p = get_principal()
+    if not p.org_id:
+        raise HTTPException(409, "You are not in a workspace yet; create one or accept an "
+                                 "invitation.")
+    return p
+
+
+def require_role(minimum: str):
+    def dep() -> Principal:
+        p = require_org()
+        if not p.can(minimum):
+            raise HTTPException(403, f"This needs the {minimum} role in the workspace.")
+        return p
+    return dep
+
+
+def require_platform_admin() -> Principal:
+    p = get_principal()
+    if not p.platform_admin:
+        raise HTTPException(403, "Platform administrators only.")
+    return p
 
 
 def load_investigation(p: Platform, investigation_id: str) -> dict:
+    """An investigation of the caller's workspace; anything else is a 404 (no
+    hint that another tenant's id exists)."""
     inv = p.db.get("investigations", investigation_id)
-    if inv is None or inv["deleted_at"]:
+    who = current_principal()
+    if (inv is None or inv["deleted_at"] or who is None or not who.org_id
+            or inv.get("org_id") != who.org_id):
         raise HTTPException(404, "investigation not found")
     return inv
 

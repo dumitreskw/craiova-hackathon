@@ -39,9 +39,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate docker-compose.yml
+      - name: Validate the compose files
+        env:
+          # Required by docker-compose.coolify.yml; placeholders for validation only.
+          OSINT_OIDC_ISSUER: https://auth.example.com/realms/osint
+          OSINT_OIDC_CLIENT_SECRET: placeholder
+          OSINT_PUBLIC_URL: https://osint.example.com
+          SEARXNG_SECRET: placeholder
         run: |
           cp .env.example .env
-          sed -i 's/^OSINT_BASIC_AUTH_HASH=.*/OSINT_BASIC_AUTH_HASH=placeholder/' .env
           docker compose config -q
           docker compose --profile egress config -q
+          docker compose -f docker-compose.coolify.yml config -q
+          docker compose -f deploy/keycloak/docker-compose.yml config -q

@@ -1,5 +1,7 @@
-# OSINT platform on one host: Caddy (TLS + basic auth) -> app (API + UI) and
-# the MCP server. Optional: a VPN egress container (profile "egress").
+# OSINT platform on one host: Caddy (TLS only) -> app (landing page, analyst
+# app, API, sign-in, authenticated /mcp) and the internal MCP server. Sign-in
+# needs a Keycloak realm (deploy/keycloak/, docs/10-auth.md). Optional: a VPN
+# egress container (profile "egress").
 #
 #   cp .env.example .env    # fill it in
 #   docker compose up -d --build
@@ -17,8 +19,6 @@ services:
       - "443:443/udp"
     environment:
       OSINT_DOMAIN: ${OSINT_DOMAIN:-localhost}
-      OSINT_BASIC_AUTH_USER: ${OSINT_BASIC_AUTH_USER:?set OSINT_BASIC_AUTH_USER in .env}
-      OSINT_BASIC_AUTH_HASH: ${OSINT_BASIC_AUTH_HASH:?set OSINT_BASIC_AUTH_HASH in .env (caddy hash-password)}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -44,6 +44,10 @@ services:
       # the container (Coolify: "Include Source Commit in Build").
       OSINT_BUILD: ${SOURCE_COMMIT:-}
       SEARXNG_URL: http://searxng:8080
+      # A public host never runs with sign-in off (docs/10-auth.md).
+      OSINT_OIDC_ISSUER: ${OSINT_OIDC_ISSUER:?set OSINT_OIDC_ISSUER in .env (scripts/keycloak_bootstrap.py)}
+      OSINT_PUBLIC_URL: ${OSINT_PUBLIC_URL:-https://${OSINT_DOMAIN:-localhost}}
+      OSINT_MCP_UPSTREAM: http://mcp:8787
     volumes:
       - osint_data:/data
     # Chromium needs more than the default 64 MB of shared memory.

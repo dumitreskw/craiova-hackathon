@@ -3,7 +3,7 @@
 const v = (name) => `rgb(var(--${name}) / <alpha-value>)`;
 
 export default {
-  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  content: ["./index.html", "./app/index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {

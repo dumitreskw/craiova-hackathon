@@ -13,7 +13,8 @@ from .. import credits as credit_check
 from ..build import build_id
 from ..platform import Platform
 from ..retention import purge_expired
-from .deps import current_user, get_platform
+from ..auth.context import Principal
+from .deps import current_user, get_platform, require_org, require_platform_admin
 
 router = APIRouter(tags=["admin"])
 
@@ -47,8 +48,11 @@ async def list_connectors(p: Platform = Depends(get_platform)):
 
 
 @router.get("/credits")
-async def credits(refresh: bool = False, p: Platform = Depends(get_platform)):
-    """Live credit / quota balance per paid or metered source (cached 5 min)."""
+async def credits(refresh: bool = False, p: Platform = Depends(get_platform),
+                  _=Depends(require_platform_admin)):
+    """Live credit / quota balance per paid or metered source (cached 5 min).
+
+    The platform's own provider accounts: platform admins only."""
     return await credit_check.credits(p.db, refresh=refresh)
 
 
@@ -56,8 +60,13 @@ async def credits(refresh: bool = False, p: Platform = Depends(get_platform)):
 async def audit(investigation_id: str | None = None, user: str | None = None,
                 since: str | None = Query(None, alias="from"),
                 until: str | None = Query(None, alias="to"),
-                limit: int = Query(500, ge=1, le=5000), p: Platform = Depends(get_platform)):
-    sql, params = "SELECT * FROM audit WHERE 1=1", []
+                limit: int = Query(500, ge=1, le=5000), p: Platform = Depends(get_platform),
+                who: Principal = Depends(require_org)):
+    # The caller's workspace only; rows from before accounts existed have no
+    # org and are matched through their investigation.
+    sql = ("SELECT * FROM audit WHERE (org_id = ? OR (org_id IS NULL AND investigation_id IN "
+           "(SELECT id FROM investigations WHERE org_id = ?)))")
+    params: list = [who.org_id, who.org_id]
     for col, op, val in (("investigation_id", "=", investigation_id), ("user", "=", user),
                          ("ts", ">=", since), ("ts", "<=", until)):
         if val:
@@ -67,5 +76,6 @@ async def audit(investigation_id: str | None = None, user: str | None = None,
 
 
 @router.post("/admin/purge-expired")
-async def purge(p: Platform = Depends(get_platform), user: str = Depends(current_user)):
+async def purge(p: Platform = Depends(get_platform), user: str = Depends(current_user),
+                _=Depends(require_platform_admin)):
     return {"purged": purge_expired(p.db, p.settings, user)}

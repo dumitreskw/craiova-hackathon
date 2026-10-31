@@ -1,23 +1,19 @@
-// Thin fetch wrapper for /api/v1. Every request carries X-Analyst so the
-// backend's audit log records who acted.
+// Thin fetch wrapper for /api/v1. The browser sends the HttpOnly session
+// cookie (same origin); who acted is decided on the server from the session.
+// A 401 means the session ended: go through sign-in and come back here.
 
 const BASE = "/api/v1";
-const ANALYST_KEY = "osint.analyst";
 
-export function getAnalyst(): string {
-  try {
-    return localStorage.getItem(ANALYST_KEY) || "";
-  } catch {
-    return "";
-  }
+export function signInUrl(): string {
+  const back = window.location.pathname + window.location.search + window.location.hash;
+  return `/auth/login?next=${encodeURIComponent(back)}`;
 }
 
-export function setAnalyst(name: string): void {
-  try {
-    localStorage.setItem(ANALYST_KEY, name);
-  } catch {
-    /* storage unavailable: the name lasts for this page only */
-  }
+let redirecting = false;
+function onUnauthorized(): void {
+  if (redirecting) return;
+  redirecting = true;
+  window.location.assign(signInUrl());
 }
 
 /** An HTTP error with FastAPI's `detail` already pulled out. */
@@ -48,10 +44,7 @@ function describeDetail(status: number, detail: unknown): string {
 }
 
 function headers(extra?: HeadersInit): Headers {
-  const h = new Headers(extra);
-  const analyst = getAnalyst();
-  if (analyst) h.set("X-Analyst", analyst);
-  return h;
+  return new Headers(extra);
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -63,6 +56,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     init.body = JSON.stringify(body);
   }
   const res = await fetch(BASE + path, init);
+  if (res.status === 401) onUnauthorized();
   if (!res.ok) {
     let detail: unknown = null;
     try {
@@ -111,6 +105,7 @@ export async function streamEvents(
   while (!signal.aborted) {
     try {
       const res = await fetch(BASE + path, { headers: headers({ Accept: "text/event-stream" }), signal });
+      if (res.status === 401) onUnauthorized();
       if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);
       onStatus(true);
       delay = 1000;
@@ -149,6 +144,7 @@ export async function streamEvents(
 
 export async function download(path: string, filename: string): Promise<void> {
   const res = await fetch(BASE + path, { headers: headers() });
+  if (res.status === 401) onUnauthorized();
   if (!res.ok) {
     let detail: unknown = null;
     try {

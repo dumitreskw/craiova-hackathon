@@ -1,0 +1,60 @@
+# Keycloak (identity provider) for the OSINT platform: its own Coolify resource,
+# separate from the app so sign-in survives app redeploys and can serve more
+# products later.
+#
+# In Coolify: New resource -> Docker Compose Empty, paste this file, set the
+# "keycloak" service domain (https://auth.<your-domain>). Coolify generates the
+# SERVICE_USER_* / SERVICE_PASSWORD_* secrets on first deploy. Then provision
+# the realm and the app's client with scripts/keycloak_bootstrap.py
+# (docs/10-auth.md).
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: ["start"]
+    restart: unless-stopped
+    environment:
+      - SERVICE_URL_KEYCLOAK_8080
+      - KC_HOSTNAME=${SERVICE_URL_KEYCLOAK}
+      - KC_HTTP_ENABLED=true
+      - KC_HTTP_PORT=8080
+      # Coolify's proxy (and Cloudflare in front of it) terminate TLS.
+      - KC_PROXY_HEADERS=xforwarded
+      - KC_HEALTH_ENABLED=true
+      - KC_DB=postgres
+      - KC_DB_URL=jdbc:postgresql://postgres:5432/keycloak
+      - KC_DB_USERNAME=${SERVICE_USER_DATABASE}
+      - KC_DB_PASSWORD=${SERVICE_PASSWORD_DATABASE}
+      # Only used to create the master-realm admin on the very first start.
+      - KC_BOOTSTRAP_ADMIN_USERNAME=${SERVICE_USER_ADMIN}
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=${SERVICE_PASSWORD_ADMIN}
+      - TZ=UTC
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '\"status\": \"UP\"' <&3"
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=keycloak
+      - POSTGRES_USER=${SERVICE_USER_DATABASE}
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_DATABASE}
+    volumes:
+      - keycloak-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  keycloak-postgres:

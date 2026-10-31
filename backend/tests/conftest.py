@@ -124,6 +124,14 @@ FAKES = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _auth_off(monkeypatch):
+    """Tests run with sign-in off (one local owner) unless a test turns it on;
+    a developer's .env with OSINT_OIDC_ISSUER must not leak in."""
+    monkeypatch.setenv("OSINT_OIDC_ISSUER", "")
+    monkeypatch.setenv("OSINT_MCP_UPSTREAM", "")
+
+
 @pytest.fixture
 def fake_registry(monkeypatch):
     registry = {name: ConnectorSpec(name, fn, accepts, passive, f"fake {name}")

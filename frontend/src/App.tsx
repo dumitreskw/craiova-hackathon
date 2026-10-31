@@ -1,19 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Cpu, FolderSearch, Monitor, Moon, Plus, Sun } from "lucide-react";
-import { api, getAnalyst, setAnalyst } from "./api";
+import { api } from "./api";
 import type { Investigation } from "./types";
+import { AccountMenu, Onboarding } from "./components/Account";
 import { CreateInvestigation } from "./components/CreateInvestigation";
 import { CreditsSummary, CreditsView } from "./components/CreditsView";
 import { ModelsView } from "./components/ModelsView";
+import { PlatformAdmin } from "./components/PlatformAdmin";
+import { TeamSettings } from "./components/TeamSettings";
 import { TABS, Workspace, type Tab } from "./components/Workspace";
-import { Badge, ErrorBox, useLoad, when } from "./components/ui";
+import { Badge, ErrorBox, Loading, useLoad, when } from "./components/ui";
 import { go } from "./nav";
+import { can, SessionContext, type Me } from "./session";
 
 type Route =
-  | { page: "home" }
-  | { page: "new" }
-  | { page: "sources" }
-  | { page: "models" }
+  | { page: "home" } | { page: "new" } | { page: "sources" } | { page: "models" }
+  | { page: "team" } | { page: "admin" }
   | { page: "inv"; id: string; tab: Tab };
 
 function parseHash(): Route {
@@ -21,6 +23,8 @@ function parseHash(): Route {
   if (parts[0] === "new") return { page: "new" };
   if (parts[0] === "sources") return { page: "sources" };
   if (parts[0] === "models") return { page: "models" };
+  if (parts[0] === "team") return { page: "team" };
+  if (parts[0] === "admin") return { page: "admin" };
   if (parts[0] === "inv" && parts[1]) {
     const tab = (TABS as readonly string[]).includes(parts[2]) ? (parts[2] as Tab) : "graph";
     return { page: "inv", id: parts[1], tab };
@@ -55,11 +59,24 @@ function useTheme(): [Theme, () => void] {
 const THEME_ICON = { system: Monitor, dark: Moon, light: Sun };
 const THEME_LABEL = { system: "Match system", dark: "Dark", light: "Light" };
 
+/** Signed-in gate: who am I and in which workspace (a 401 goes to sign-in). */
 export default function App() {
+  const [me, meError, , reloadMe] = useLoad(() => api.get<Me>("/me"), []);
+  const session = useMemo(() => (me ? { me, reload: reloadMe } : null), [me, reloadMe]);
+  if (meError) return <div className="mx-auto max-w-md p-8"><ErrorBox error={meError} /></div>;
+  if (!session) return <Loading>Signing in</Loading>;
+  return (
+    <SessionContext.Provider value={session}>
+      {session.me.org ? <Shell key={session.me.org.id} me={session.me} /> : <Onboarding />}
+    </SessionContext.Provider>
+  );
+}
+
+function Shell({ me }: { me: Me }) {
   const [route, setRoute] = useState<Route>(parseHash);
   const [theme, cycleTheme] = useTheme();
-  const [analyst, setAnalystState] = useState(getAnalyst);
   const [list, listError, , reloadList] = useLoad(() => api.get<Investigation[]>("/investigations"), []);
+  const canWrite = can(me, "analyst");
   const [health] = useLoad(() => api.get<{ build?: string }>("/health"), []);
 
   useEffect(() => {
@@ -84,7 +101,7 @@ export default function App() {
       <aside className="flex w-[264px] shrink-0 flex-col border-r border-line bg-panel max-md:hidden">
         <a href="#/" className="flex items-center gap-2.5 px-4 pb-3 pt-4">
           <img src="/favicon.svg" alt="" className="h-7 w-7" />
-          <span className="text-[15px] font-semibold tracking-tight">OSINT Workbench</span>
+          <span className="text-[15px] font-semibold tracking-tight">Cybnetic OSINT</span>
           {health?.build && (
             <span className="ml-auto rounded border border-line px-1.5 py-px font-mono text-[11px] text-muted"
               title={`Build ${health.build} (first 8 characters of the commit)`}>
@@ -92,11 +109,13 @@ export default function App() {
             </span>
           )}
         </a>
-        <div className="px-3 pb-3">
-          <a href="#/new" className={`btn btn-primary w-full ${route.page === "new" ? "ring-2 ring-accent/40" : ""}`}>
-            <Plus className="h-4 w-4" aria-hidden /> New investigation
-          </a>
-        </div>
+        {canWrite && (
+          <div className="px-3 pb-3">
+            <a href="#/new" className={`btn btn-primary w-full ${route.page === "new" ? "ring-2 ring-accent/40" : ""}`}>
+              <Plus className="h-4 w-4" aria-hidden /> New investigation
+            </a>
+          </div>
+        )}
         <p className="px-4 pb-1 text-xs font-medium text-muted" id="inv-nav">Investigations</p>
         <nav className="scroll-thin min-h-0 flex-1 overflow-y-auto px-2 pb-2" aria-labelledby="inv-nav">
           {listError ? <div className="px-1"><ErrorBox error={listError} /></div> : null}
@@ -121,20 +140,15 @@ export default function App() {
             );
           })}
         </nav>
-        <div className="space-y-3 border-t border-line p-3">
-          <a href="#/models" className={`btn btn-quiet btn-sm w-full justify-start ${
-            route.page === "models" ? "bg-raised" : ""}`}>
-            <Cpu className="h-4 w-4" aria-hidden /> Agent models
-          </a>
-          <CreditsSummary />
-          <div className="px-1">
-            <label className="label" htmlFor="analyst">Your name in the audit log</label>
-            <input id="analyst" className="field" placeholder="analyst" value={analyst}
-              onChange={(e) => {
-                setAnalystState(e.target.value);
-                setAnalyst(e.target.value);
-              }} />
-          </div>
+        <div className="space-y-2 border-t border-line p-3">
+          {me.user.platform_admin && (
+            <a href="#/models" className={`btn btn-quiet btn-sm w-full justify-start ${
+              route.page === "models" ? "bg-raised" : ""}`}>
+              <Cpu className="h-4 w-4" aria-hidden /> Agent models
+            </a>
+          )}
+          {me.user.platform_admin && <CreditsSummary />}
+          <AccountMenu active={route.page} />
           <button className="btn btn-quiet btn-sm w-full justify-start" onClick={cycleTheme}
             aria-label={`Theme: ${THEME_LABEL[theme]}. Click to change.`}>
             <ThemeIcon className="h-4 w-4" aria-hidden /> Theme: {THEME_LABEL[theme]}
@@ -144,9 +158,11 @@ export default function App() {
 
       <main className="flex min-w-0 flex-1 flex-col">
         {route.page === "new" && <CreateInvestigation onCreated={onCreated} />}
-        {route.page === "home" && <Home list={list} />}
+        {route.page === "home" && <Home list={list} canWrite={canWrite} />}
         {route.page === "sources" && <CreditsView />}
         {route.page === "models" && <ModelsView />}
+        {route.page === "team" && <TeamSettings />}
+        {route.page === "admin" && <PlatformAdmin />}
         {route.page === "inv" && (
           <Workspace key={route.id} id={route.id} tab={route.tab} onChanged={reloadList} />
         )}
@@ -155,7 +171,7 @@ export default function App() {
   );
 }
 
-function Home({ list }: { list: Investigation[] | null }) {
+function Home({ list, canWrite }: { list: Investigation[] | null; canWrite: boolean }) {
   return (
     <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-4xl px-6 py-12">
@@ -165,9 +181,10 @@ function Home({ list }: { list: Investigation[] | null }) {
           any fact in the graph or a report traces back to where it came from.
         </p>
         <div className="mt-6 flex gap-2">
-          <a href="#/new" className="btn btn-primary"><Plus className="h-4 w-4" aria-hidden /> New investigation</a>
-          <a href="#/sources" className="btn">Sources and credits</a>
-          <a href="#/models" className="btn">Agent models</a>
+          {canWrite && (
+            <a href="#/new" className="btn btn-primary"><Plus className="h-4 w-4" aria-hidden /> New investigation</a>
+          )}
+          <a href="#/sources" className="btn">Sources</a>
         </div>
         {list && list.length > 0 && (
           <table className="mt-10 w-full border-collapse text-sm">
@@ -199,7 +216,9 @@ function Home({ list }: { list: Investigation[] | null }) {
             <FolderSearch className="mt-0.5 h-6 w-6 text-muted" aria-hidden />
             <div>
               <p className="font-medium">No investigations yet</p>
-              <p className="mt-1 text-sm text-muted">Start one with a purpose; targets come next.</p>
+              <p className="mt-1 text-sm text-muted">
+                {canWrite ? "Start one with a purpose; targets come next." : "Investigations your team opens appear here."}
+              </p>
             </div>
           </div>
         )}

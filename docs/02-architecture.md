@@ -14,7 +14,7 @@ flowchart TB
   user(["Analyst · browser"])
 
   subgraph vps["VPS — docker compose"]
-    caddy["Caddy · TLS + basic auth"]
+    caddy["TLS proxy (Coolify Traefik or Caddy)"]
 
     subgraph app["FastAPI app"]
       direction TB
@@ -482,8 +482,8 @@ is loaded into the UI as JSON. For 2-hop queries a recursive CTE is enough.
   Playwright (headless Chromium for `screenshot`), SQLite via SQLModel.
 - **Frontend**: React + Vite + Cytoscape.js + Tailwind, served as static files
   by FastAPI.
-- **Infra**: one small VPS (2 vCPU / 4 GB), Docker Compose, Caddy for HTTPS
-  and basic auth.
+- **Infra**: one small VPS (2 vCPU / 4 GB), Docker Compose, a TLS proxy, and
+  Keycloak for sign-in (docs/10-auth.md).
 
 ## Data flow example: `example.com` (agent mode)
 

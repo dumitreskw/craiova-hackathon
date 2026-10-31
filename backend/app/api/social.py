@@ -2,6 +2,9 @@
 
 The worker endpoints (``/worker/...``) take the shared ``X-Worker-Token``
 (``OSINT_WORKER_TOKEN``); everything else is the normal analyst API.
+
+Personas are real logged-in accounts on the operator's Kali VM, shared by every
+workspace: any member can capture through them, only platform admins manage them.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from ..platform import Platform
 from ..social import PLATFORMS, SocialError
-from .deps import current_user, get_platform, load_investigation
+from .deps import current_user, get_platform, load_investigation, require_platform_admin
 
 router = APIRouter(tags=["social"])
 
@@ -75,6 +78,14 @@ def worker_auth(p: Platform = Depends(get_platform),
 def _err(e: SocialError, status: int = 422) -> HTTPException:
     return HTTPException(status, str(e))
 
+def _own_watch(p: Platform, watch_id: str) -> None:
+    """A watch of an investigation in the caller's workspace (else 404)."""
+    watch = p.db.get("social_watches", watch_id)
+    if watch is None:
+        raise HTTPException(404, "no such watch")
+    load_investigation(p, watch["investigation_id"])
+
+
 # --- personas ---------------------------------------------------------------
 
 @router.get("/social/status")
@@ -90,7 +101,7 @@ async def social_platforms():
 
 @router.post("/social/personas", status_code=201)
 async def create_persona(body: PersonaCreate, p: Platform = Depends(get_platform),
-                         user: str = Depends(current_user)):
+                         user: str = Depends(current_user), _=Depends(require_platform_admin)):
     try:
         return p.social.create_persona(body.name, body.platform, body.region, body.note, user)
     except SocialError as e:
@@ -99,7 +110,7 @@ async def create_persona(body: PersonaCreate, p: Platform = Depends(get_platform
 
 @router.patch("/social/personas/{name}")
 async def update_persona(name: str, body: PersonaUpdate, p: Platform = Depends(get_platform),
-                         user: str = Depends(current_user)):
+                         user: str = Depends(current_user), _=Depends(require_platform_admin)):
     try:
         return p.social.update_persona(name, body.model_dump(exclude_none=True), user)
     except SocialError as e:
@@ -108,7 +119,7 @@ async def update_persona(name: str, body: PersonaUpdate, p: Platform = Depends(g
 
 @router.post("/social/personas/{name}/login", status_code=202)
 async def login_persona(name: str, p: Platform = Depends(get_platform),
-                        user: str = Depends(current_user)):
+                        user: str = Depends(current_user), _=Depends(require_platform_admin)):
     """Queue a manual login: the worker opens a visible browser on Kali for you."""
     try:
         return p.social.login(name, user)
@@ -191,6 +202,7 @@ async def create_watch(investigation_id: str, body: WatchCreate,
 @router.patch("/social/watches/{watch_id}")
 async def update_watch(watch_id: str, body: WatchUpdate, p: Platform = Depends(get_platform),
                        user: str = Depends(current_user)):
+    _own_watch(p, watch_id)
     try:
         return p.social.update_watch(watch_id, body.model_dump(exclude_none=True), user)
     except SocialError as e:
@@ -200,6 +212,7 @@ async def update_watch(watch_id: str, body: WatchUpdate, p: Platform = Depends(g
 @router.delete("/social/watches/{watch_id}", status_code=204)
 async def delete_watch(watch_id: str, p: Platform = Depends(get_platform),
                        user: str = Depends(current_user)):
+    _own_watch(p, watch_id)
     try:
         p.social.delete_watch(watch_id, user)
     except SocialError as e:

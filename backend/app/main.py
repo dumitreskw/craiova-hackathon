@@ -3,8 +3,9 @@
     uv run uvicorn app.main:app --reload          # http://127.0.0.1:8000/docs
 
 When the built frontend exists (``frontend/dist``, or ``OSINT_FRONTEND_DIR``)
-it is served at ``/``, with unknown paths falling back to ``index.html`` so
-client-side routes work.
+it is served: the public landing page at ``/`` and the analyst app at
+``/app/`` (which signs in through ``/auth/login``). Unknown paths fall back to
+``index.html``.
 """
 
 from __future__ import annotations
@@ -20,6 +21,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from connectors._http import aclose
 
 from .api import router
+from .auth import AuthMiddleware, AuthSettings, get_auth
+from .auth import mcp_proxy
+from .auth import routes as auth_routes
 from .config import BACKEND_DIR
 from .platform import Platform
 from .retention import purge_expired
@@ -37,19 +41,28 @@ class SPAStaticFiles(StaticFiles):
             return await super().get_response("index.html", scope)
 
 
-def create_app(platform: Platform | None = None) -> FastAPI:
+def create_app(platform: Platform | None = None,
+               auth_settings: AuthSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         p = platform or Platform()
         app.state.platform = p
+        auth = get_auth(app)
         purge_expired(p.db, p.settings)
         p.social.start()  # schedules social watches
         yield
         p.close()
+        await auth.aclose()
+        await mcp_proxy.aclose()
         await aclose()
 
-    app = FastAPI(title="OSINT platform", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="OSINT platform", version="0.3.0", lifespan=lifespan)
+    app.state.auth_settings = auth_settings
+    # Sign-in on /api and /mcp (app/auth); the landing page and app shell are public.
+    app.add_middleware(AuthMiddleware)
     app.include_router(router)
+    app.include_router(auth_routes.router)
+    app.include_router(mcp_proxy.router)
     frontend = Path(os.environ.get("OSINT_FRONTEND_DIR", BACKEND_DIR.parent / "frontend" / "dist"))
     if (frontend / "index.html").is_file():
         app.mount("/", SPAStaticFiles(directory=frontend, html=True), name="frontend")

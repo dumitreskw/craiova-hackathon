@@ -1,0 +1,45 @@
+/* The landing page scrolls as a document (the app shell is a fixed-height layout). */
+html,
+body,
+#root {
+  height: auto;
+  min-height: 100%;
+}
+
+/* The hero's one orchestrated moment: the pivot trail resolves fact by fact. */
+@keyframes trail-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.trail-step {
+  opacity: 0;
+  animation: trail-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+  animation-delay: calc(var(--i) * 260ms + 200ms);
+}
+
+@keyframes trail-line {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+.trail-line {
+  transform-origin: top;
+  animation: trail-line 1700ms cubic-bezier(0.3, 0.6, 0.2, 1) 200ms both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trail-step {
+    opacity: 1;
+  }
+}

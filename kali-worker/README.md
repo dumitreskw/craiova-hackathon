@@ -25,7 +25,7 @@ playwright install chromium            # self-contained browser for this venv
 #   OSINT_CHROMIUM_CHANNEL=chromium in the env file.
 
 cp /path/to/repo/kali-worker/osint-worker.env.example osint-worker.env
-# edit osint-worker.env: OSINT_PLATFORM_URL, OSINT_WORKER_TOKEN, OSINT_BASIC_AUTH
+# edit osint-worker.env: OSINT_PLATFORM_URL, OSINT_WORKER_TOKEN
 ```
 
 On the platform set the matching secret: `OSINT_WORKER_TOKEN` (same value) in

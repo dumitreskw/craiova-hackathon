@@ -1,32 +1,19 @@
-# TLS (automatic, Let's Encrypt) + one basic-auth login in front of everything.
-# Add analysts by adding lines under basic_auth: `name <hash from caddy hash-password>`.
+# Standalone host only (docker-compose.yml): TLS from Let's Encrypt, nothing
+# else. Sign-in is the app's own (Keycloak, docs/10-auth.md); the app serves
+# the landing page, the analyst app, /auth/* and the authenticated /mcp.
 {$OSINT_DOMAIN} {
 	encode zstd gzip
-
-	basic_auth {
-		{$OSINT_BASIC_AUTH_USER} {$OSINT_BASIC_AUTH_HASH}
-	}
 
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options nosniff
 		X-Frame-Options SAMEORIGIN
-		Referrer-Policy no-referrer
+		Referrer-Policy strict-origin-when-cross-origin
 		-Server
 	}
 
-	# OSINT MCP server for Claude Code / Claude Desktop (passive tools only).
-	handle /mcp* {
-		reverse_proxy mcp:8787
-	}
-
-	handle {
-		reverse_proxy app:8000 {
-			# The audit log's "who": always the authenticated user, never a
-			# client-supplied header.
-			header_up X-Analyst {http.auth.user.id}
-			# Server-sent events (live graph, agent transcripts) must not buffer.
-			flush_interval -1
-		}
+	reverse_proxy app:8000 {
+		# Server-sent events (live graph, agent transcripts) must not buffer.
+		flush_interval -1
 	}
 }

@@ -16,7 +16,7 @@ from ..agent.catalog import (anthropic_catalog, fetch_venice_models, is_anthropi
 from ..agent.model import configured, venice_configured
 from ..models.schemas import ModelAssignments
 from ..platform import Platform
-from .deps import current_user, get_platform
+from .deps import current_user, get_platform, require_platform_admin
 
 router = APIRouter(tags=["models"])
 
@@ -64,7 +64,9 @@ async def list_models(p: Platform = Depends(get_platform)):
 
 @router.put("/models/assignments")
 async def set_assignments(body: ModelAssignments, p: Platform = Depends(get_platform),
-                          user: str = Depends(current_user)):
+                          user: str = Depends(current_user),
+                          _=Depends(require_platform_admin)):
+    # Platform-wide (every workspace's agents): platform admins only.
     saved = dict(p.db.get_setting("model_assignments", {}) or {})
     for kind, model_id in body.assignments.items():
         if kind not in TASK_KEYS:

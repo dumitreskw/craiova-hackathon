@@ -15,7 +15,7 @@ root="$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)"
 cd "$root"
 
 [ -f .env ] || { echo "no .env here: copy .env.example to .env and fill it in" >&2; exit 1; }
-for var in OSINT_DOMAIN OSINT_BASIC_AUTH_USER OSINT_BASIC_AUTH_HASH SEARXNG_SECRET; do
+for var in OSINT_DOMAIN OSINT_OIDC_ISSUER OSINT_OIDC_CLIENT_SECRET SEARXNG_SECRET; do
   grep -Eq "^${var}=.+" .env || { echo ".env is missing ${var}" >&2; exit 1; }
 done
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
