@@ -136,8 +136,43 @@ export interface Run {
   status: "running" | "finished" | "failed" | "cancelled" | string;
   summary: string | null;
   stats: Record<string, unknown>;
+  model?: string | null;
   started_at: string;
   finished_at: string | null;
+}
+
+// --- Model assignments (the Models settings page, GET /models) --------------
+
+/** One agent role a model can be assigned to. */
+export interface ModelTask {
+  key: string;
+  label: string;
+  detail: string;
+}
+
+/** A selectable model (a Claude shortlist entry or a live Venice model). */
+export interface ModelInfo {
+  id: string;
+  label: string;
+  provider: "anthropic" | "venice";
+  note?: string;
+  tools?: boolean; // can drive an agent (function calling)
+  reasoning?: boolean;
+  uncensored?: boolean;
+  context?: number | null;
+  available?: boolean; // the provider's key is on the server
+  hidden?: boolean;
+}
+
+export interface ModelCatalog {
+  tasks: ModelTask[];
+  assignments: Record<string, string>;
+  defaults: Record<string, string>;
+  providers: {
+    anthropic: { available: boolean };
+    venice: { available: boolean; configured_list: boolean };
+  };
+  models: ModelInfo[];
 }
 
 export interface Connector {

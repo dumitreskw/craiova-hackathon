@@ -78,6 +78,18 @@ class ReportUpdate(BaseModel):
     body: dict[str, Any]
 
 
+class ModelAssignments(BaseModel):
+    """Which model runs each agent task (keys are catalogue task keys). An empty
+    value clears that task back to its built-in default."""
+    assignments: dict[str, str] = Field(default_factory=dict)
+
+
+# Optional per-run model override, validated against the catalogue by the
+# endpoint. Omitted = use the task's assignment from the Models settings page.
+_ModelOverride = Field(None, max_length=100,
+                       description="model id for this run; omit for the task's assigned model")
+
+
 class CollectRequest(BaseModel):
     goal: str = Field(min_length=5, max_length=2000,
                       description='e.g. "Map the attack surface and who is behind it"')
@@ -87,6 +99,7 @@ class CollectRequest(BaseModel):
     # Default: every source, including monthly-quota (Hunter, Tomba) and paid
     # (DeHashed) ones; the ledger still enforces quotas and seed-only rules.
     costly_connectors: Literal["none", "metered", "all"] = "all"
+    model: str | None = _ModelOverride
 
 
 class ReportAgentRequest(BaseModel):
@@ -97,6 +110,7 @@ class ReportAgentRequest(BaseModel):
     # and an independent reviewer fact-checks the report before it is final.
     verify: bool = True
     review: bool = True
+    model: str | None = _ModelOverride
 
 
 class VerifyRequest(BaseModel):
@@ -104,6 +118,7 @@ class VerifyRequest(BaseModel):
                       max_length=2000)
     max_tool_calls: int = Field(25, ge=0, le=100,
                                 description="page reads, searches and persona look-ups")
+    model: str | None = _ModelOverride
 
 
 class CaptureRequest(BaseModel):
@@ -117,6 +132,7 @@ class DeepRequest(BaseModel):
     max_tool_calls: int = Field(60, ge=6, le=250,
                                 description="lookups shared by all workers")
     costly_connectors: Literal["none", "metered", "all"] = "all"
+    model: str | None = _ModelOverride
 
 
 class MaterialText(BaseModel):

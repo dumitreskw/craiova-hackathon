@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from app import review
-from app.agent.model import echo_content
+from app.agent.catalog import build_model, fetch_venice_models, is_anthropic
+from app.agent.model import VeniceModel, _openai_messages, _openai_tools, echo_content
 from app.evidence import capture
 from app.main import create_app
 from app.models import new_id, now
@@ -206,6 +209,172 @@ def test_echo_content_drops_pre_fallback_tool_calls():
               SimpleNamespace(type="tool_use", id="y")]
     kept = echo_content(blocks)
     assert [b.type for b in kept] == ["text", "fallback", "tool_use"] and kept[-1].id == "y"
+
+
+# --- Venice model (OpenAI-compatible) -------------------------------------------------
+
+
+def test_openai_message_and_tool_conversion():
+    history = [
+        {"role": "user", "content": "brief"},
+        {"role": "assistant",
+         "content": [SimpleNamespace(type="thinking", thinking="hmm"), text("On it."),
+                     tool("t1", "dns", {"value": "example.com"})]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "203.0.113.10"}]},
+        {"role": "assistant", "content": [text("Done.")]},
+    ]
+    out = _openai_messages("SYS", history)
+    assert out[0] == {"role": "system", "content": "SYS"}
+    assert out[1] == {"role": "user", "content": "brief"}
+    assert out[2]["role"] == "assistant" and out[2]["content"] == "On it."
+    assert out[2]["tool_calls"] == [{"id": "t1", "type": "function", "function": {
+        "name": "dns", "arguments": '{"value": "example.com"}'}}]
+    assert out[3] == {"role": "tool", "tool_call_id": "t1", "content": "203.0.113.10"}
+    assert out[4] == {"role": "assistant", "content": "Done."}
+    otools = _openai_tools([{"name": "dns", "description": "resolve",
+                             "input_schema": {"type": "object"}}])
+    assert otools == [{"type": "function", "function": {
+        "name": "dns", "description": "resolve", "parameters": {"type": "object"}}}]
+
+
+async def test_venice_model_streams_openai_sse():
+    body = (
+        'data: {"choices": [{"delta": {"content": "Pub"}}]}\n\n'
+        'data: {"choices": [{"delta": {"content": "lic"}}]}\n\n'
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", '
+        '"function": {"name": "dns", "arguments": "{\\"value\\":"}}]}}]}\n\n'
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, '
+        '"function": {"arguments": " \\"example.com\\"}"}}]}, "finish_reason": "tool_calls"}]}\n\n'
+        'data: {"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 3}}\n\n'
+        "data: [DONE]\n\n"
+    )
+    seen = {}
+
+    def handler(request):
+        seen["payload"] = json.loads(request.content)
+        return httpx.Response(200, content=body.encode())
+
+    deltas = []
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler),
+                               base_url="http://venice.test")
+    model = VeniceModel(model="m", api_key="k", client=client)
+    result = await model.turn(
+        system="SYS", tools=[{"name": "dns", "description": "d", "input_schema": {}}],
+        messages=[{"role": "user", "content": "brief"}], effort="low",
+        on_delta=lambda kind, chunk: deltas.append(chunk))
+    assert "".join(deltas) == "Public"
+    assert [b.type for b in result.content] == ["text", "tool_use"]
+    assert result.content[1].id == "call_1" and result.content[1].name == "dns"
+    assert result.content[1].input == {"value": "example.com"}
+    assert result.stop_reason == "tool_use"
+    assert (result.usage.input_tokens, result.usage.output_tokens) == (12, 3)
+    payload = seen["payload"]
+    assert payload["model"] == "m" and payload["stream"]
+    assert payload["messages"][0] == {"role": "system", "content": "SYS"}
+    assert payload["tools"][0]["function"]["name"] == "dns"
+
+
+async def test_venice_content_filter_maps_to_refusal():
+    body = ('data: {"choices": [{"delta": {"content": "no"}, "finish_reason": "content_filter"}]}\n\n'
+            "data: [DONE]\n\n")
+    client = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, content=body.encode())), base_url="http://venice.test")
+    model = VeniceModel(model="m", api_key="k", client=client)
+    result = await model.turn(system="", tools=[], messages=[{"role": "user", "content": "x"}],
+                              effort="low", on_delta=lambda *a: None)
+    assert result.stop_reason == "refusal"
+
+
+async def test_venice_bad_tool_json_raises_valueerror_for_loop_retry():
+    body = ('data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c", '
+            '"function": {"name": "dns", "arguments": "{bad"}}]}, "finish_reason": "tool_calls"}]}\n\n'
+            "data: [DONE]\n\n")
+    client = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, content=body.encode())), base_url="http://venice.test")
+    model = VeniceModel(model="m", api_key="k", client=client)
+    with pytest.raises(ValueError):  # the agent loop catches this and re-issues the turn
+        await model.turn(system="", tools=[], messages=[{"role": "user", "content": "x"}],
+                         effort="low", on_delta=lambda *a: None)
+
+
+async def test_venice_http_error_raises():
+    client = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(401, content=b'{"error":"bad key"}')), base_url="http://venice.test")
+    model = VeniceModel(model="m", api_key="k", client=client)
+    with pytest.raises(RuntimeError, match="Venice 401"):
+        await model.turn(system="", tools=[], messages=[{"role": "user", "content": "x"}],
+                         effort="low", on_delta=lambda *a: None)
+
+
+# --- model catalogue & assignments ----------------------------------------------------
+
+
+async def test_fetch_venice_models_lists_tool_capable_first():
+    data = {"object": "list", "data": [
+        {"id": "no-tools", "type": "text",
+         "model_spec": {"name": "No Tools", "capabilities": {"supportsFunctionCalling": False}}},
+        {"id": "ds-flash", "type": "text", "context_length": 128000,
+         "model_spec": {"name": "DeepSeek Flash", "description": "fast",
+                        "capabilities": {"supportsFunctionCalling": True, "supportsReasoning": True}}},
+    ]}
+    client = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, json=data)), base_url="http://venice.test")
+    entries = await fetch_venice_models("k", client=client)
+    assert [e["id"] for e in entries] == ["ds-flash", "no-tools"]  # tool-capable first
+    assert entries[0]["tools"] and entries[0]["reasoning"] and entries[0]["context"] == 128000
+    assert entries[0]["provider"] == "venice" and entries[0]["label"] == "DeepSeek Flash"
+
+
+def test_build_model_routes_by_provider():
+    assert is_anthropic("claude-opus-5-5") and not is_anthropic("deepseek-v4-1-flash-1017")
+    m = build_model("deepseek-v4-1-flash-1017", progress_updates=True, venice_api_key="k")
+    assert isinstance(m, VeniceModel) and m.model == "deepseek-v4-1-flash-1017"
+    with pytest.raises(RuntimeError, match="VENICE_INFERENCE_KEY"):
+        build_model("some-venice-model", progress_updates=True, venice_api_key=None)
+
+
+def test_platform_assignments_default_and_resolve(settings):
+    s = replace(settings, venice_api_key="k")
+    p = Platform(s)  # default (no injected factory) -> resolver active
+    try:
+        assert p.assigned_model("collection") == "claude-opus-5-5"
+        assert p.assigned_model("worker") == "claude-sonnet-5-5"
+        p.db.set_setting("model_assignments", {"worker": "deepseek-v4-1-flash-1017"}, "ana")
+        assert p.assigned_model("worker") == "deepseek-v4-1-flash-1017"
+        assert p.assigned_model("collection") == "claude-opus-5-5"  # untouched
+        resolved = p._resolve_model("worker", None)
+        assert isinstance(resolved, VeniceModel) and resolved.model == "deepseek-v4-1-flash-1017"
+        # A per-run override wins over the assignment.
+        assert p._resolve_model("worker", "other-venice").model == "other-venice"
+    finally:
+        p.close()
+
+
+async def test_api_models_list_and_assign(client, agent_platform, monkeypatch):
+    p = agent_platform
+    monkeypatch.setenv("VENICE_INFERENCE_KEY", "k")  # make venice models assignable
+    listing = (await client.get("/models")).json()
+    assert [t["key"] for t in listing["tasks"]][:3] == ["collection", "deep", "worker"]
+    assert listing["assignments"]["collection"] == "claude-opus-5-5"
+    assert any(m["id"] == "claude-opus-5-5" for m in listing["models"])
+
+    res = await client.put("/models/assignments",
+                           json={"assignments": {"worker": "deepseek-v4-1-flash-1017"}})
+    assert res.status_code == 200
+    assert res.json()["assignments"]["worker"] == "deepseek-v4-1-flash-1017"
+    assert p.db.get_setting("model_assignments")["worker"] == "deepseek-v4-1-flash-1017"
+    # Clearing it falls back to the built-in default.
+    await client.put("/models/assignments", json={"assignments": {"worker": ""}})
+    assert (await client.get("/models")).json()["assignments"]["worker"] == "claude-sonnet-5-5"
+
+
+async def test_api_assign_rejects_unusable_model(client, monkeypatch):
+    for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
+        monkeypatch.delenv(k, raising=False)
+    res = await client.put("/models/assignments",
+                           json={"assignments": {"collection": "claude-opus-5-5"}})
+    assert res.status_code == 422 and "ANTHROPIC_API_KEY" in str(res.json()["detail"])
 
 
 # --- report agent ---------------------------------------------------------------------

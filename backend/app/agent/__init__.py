@@ -63,16 +63,25 @@ REVIEW_EXCERPT = 1500      # characters of each cited finding shown to the revie
 
 class AgentRunner:
     def __init__(self, ledger: Ledger, model_factory: Callable[[], ModelClient],
-                 worker_model_factory: Callable[[], ModelClient] | None = None):
+                 worker_model_factory: Callable[[], ModelClient] | None = None,
+                 model_resolver: Callable[[str, str | None], ModelClient] | None = None):
         self.ledger = ledger
         self.db = ledger.db
         self.bus = ledger.bus
         self.model_factory = model_factory
         # Deep-analysis workers may run on a cheaper model (docs/02, "Models").
         self.worker_model_factory = worker_model_factory or model_factory
+        # Picks the model per task from the Models settings page: (kind, override)
+        # -> ModelClient. When unset (tests), the factories above are used.
+        self.model_resolver = model_resolver
         self.model_factory_is_default = False
         self.tasks: dict[str, asyncio.Task] = {}
         self.social: Any = None  # the SocialHub, for the persona tools (set by Platform)
+
+    def _model_for(self, kind: str, override: str | None = None) -> ModelClient:
+        if self.model_resolver is not None:
+            return self.model_resolver(kind, override)
+        return self.worker_model_factory() if kind == "worker" else self.model_factory()
 
     # --- lifecycle --------------------------------------------------------------
 
@@ -91,11 +100,11 @@ class AgentRunner:
 
     def start(self, investigation: dict, kind: str, goal: str, user: str,
               max_tool_calls: int, costly: str = "all", verify: bool = False,
-              review: bool = False) -> str:
+              review: bool = False, model: str | None = None) -> str:
         run_id = self.new_run(investigation, kind, goal, user, max_tool_calls)
         task = asyncio.create_task(self.run(run_id, investigation, kind, goal, user,
                                             max_tool_calls, costly, verify=verify,
-                                            review=review))
+                                            review=review, model=model))
         self.tasks[run_id] = task
         task.add_done_callback(lambda _t: self.tasks.pop(run_id, None))
         return run_id
@@ -113,7 +122,7 @@ class AgentRunner:
                   max_tool_calls: int, costly: str = "all", worker: str | None = None,
                   parent: str | None = None, materials: list[str] | None = None,
                   verify: bool = False, review: bool = False,
-                  report_id: str | None = None) -> dict:
+                  report_id: str | None = None, model: str | None = None) -> dict:
         """``materials``: for a worker, the material ids its orchestrator handed it.
 
         For the report writer, ``verify`` runs the verification agent first and
@@ -173,7 +182,11 @@ class AgentRunner:
         transcript: list[dict] = []
         usage: Counter[str] = Counter()
         status, summary = "finished", ""
-        model = self.worker_model_factory() if kind == "worker" else self.model_factory()
+        model = self._model_for(kind, model)
+        model_id = getattr(model, "model", None)
+        if model_id:
+            self.db.update("agent_runs", run_id, {"model": model_id})
+            self.bus.publish(inv_id, "agent.model", {"run_id": run_id, "model": model_id})
         qa: dict | None = None
 
         def on_delta(kind_: str, chunk: str) -> None:

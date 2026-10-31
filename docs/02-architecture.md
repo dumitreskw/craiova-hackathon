@@ -275,6 +275,16 @@ breach lookups, recon) can run on `claude-sonnet-5-5` to keep a deep run
 affordable. For the demo, a single deep analysis is a handful of worker runs,
 so this stays well within budget.
 
+The model for each agent task (collection, deep orchestrator, workers, verify,
+report, review) is assignable from the **Models** settings page in the UI
+(`GET/PUT /api/v1/models`, stored in `app_settings`). Two providers: the Claude
+shortlist, and — when `VENICE_INFERENCE_KEY` is set — any tool-capable model
+from Venice's live catalogue (served through `VeniceModel`, an OpenAI-compatible
+client). `OSINT_AGENT_MODEL`/`OSINT_WORKER_MODEL` remain the defaults when a task
+has no explicit assignment, and each run records the model it used. Assigning a
+provider is a deliberate per-task choice; a refusal still ends the run — no
+model is switched in automatically.
+
 > **Status: built.** `POST /investigations/{id}/deep`. Workers: infrastructure,
 > web_presence, people_identity, company_registry, breach_exposure,
 > legal_screening (`app/agent/tools.py` `WORKERS`), each limited to its own

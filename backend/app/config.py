@@ -27,6 +27,11 @@ class Settings:
     # Deep-analysis workers: high-volume lookups on a cheaper model (docs/02).
     worker_model: str = "claude-sonnet-5-5"
     agent_progress_updates: bool = True
+    # Venice AI: lets the analyst assign a Venice model to any agent task from
+    # the Models settings page. Unset key = Venice models are offered but
+    # cannot be selected. Not a refusal fallback — a declined turn still ends.
+    venice_api_key: str | None = None
+    venice_base_url: str = "https://api.venice.ai/api/v1"
     # Shared secret of the Kali social worker (kali-worker/); unset = worker API off.
     worker_token: str | None = None
 
@@ -69,5 +74,7 @@ def load_settings() -> Settings:
         agent_model=os.environ.get("OSINT_AGENT_MODEL", "claude-opus-5-5"),
         worker_model=os.environ.get("OSINT_WORKER_MODEL", "claude-sonnet-5-5"),
         agent_progress_updates=os.environ.get("OSINT_AGENT_PROGRESS_UPDATES", "1") != "0",
+        venice_api_key=os.environ.get("VENICE_INFERENCE_KEY") or None,
+        venice_base_url=os.environ.get("VENICE_BASE_URL", "https://api.venice.ai/api/v1"),
         worker_token=os.environ.get("OSINT_WORKER_TOKEN") or None,
     )

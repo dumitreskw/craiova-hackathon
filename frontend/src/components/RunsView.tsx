@@ -109,6 +109,9 @@ export function RunsView({ investigationId, stream }: { investigationId: string;
                         {child && r.stats?.worker ? `Worker: ${String(r.stats.worker).replace(/_/g, " ")}` : KIND[r.kind] || r.kind}
                       </div>
                       <Mono className="text-xs text-muted">{r.id}</Mono>
+                      {r.model && (
+                        <div className="mt-0.5" title="Model this run used"><Mono className="text-2xs text-muted">{r.model}</Mono></div>
+                      )}
                       {r.goal && <div className="mt-0.5 max-w-xs text-xs text-muted">{r.goal}</div>}
                     </td>
                     <td className="py-3 pr-4"><Badge value={r.status} /></td>

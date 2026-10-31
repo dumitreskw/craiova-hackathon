@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from ..agent import ensure_target
-from ..agent.model import configured
 from ..evidence import capture, read_page, screenshot_dir
 from .. import review
 from ..models.schemas import (CaptureRequest, CollectRequest, DeepRequest, ReportAgentRequest,
@@ -18,10 +17,15 @@ from .deps import current_user, get_platform, load_investigation
 router = APIRouter(tags=["agents"])
 
 
-def _require_claude(p: Platform) -> None:
-    if p.agents.model_factory_is_default and not configured():
-        raise HTTPException(503, "Claude agents need ANTHROPIC_API_KEY on the server; the quick "
-                                 "scan and the graph draft report work without it.")
+def _require_model(p: Platform, kind: str, override: str | None) -> None:
+    """The model assigned to this task (or the per-run override) must be usable."""
+    if not p.agents.model_factory_is_default:  # a test/explicit model is injected
+        return
+    model_id = override or p.assigned_model(kind)
+    err = p.model_error(model_id)
+    if err:
+        raise HTTPException(503, f"{err} The quick scan and the graph draft report work "
+                                 "without a model, or assign a usable model on the Models page.")
 
 
 @router.post("/investigations/{investigation_id}/collect", status_code=202)
@@ -29,13 +33,13 @@ async def collect(investigation_id: str, body: CollectRequest,
                   p: Platform = Depends(get_platform), user: str = Depends(current_user)):
     """Start the collection agent (docs/05-api.md)."""
     inv = load_investigation(p, investigation_id)
-    _require_claude(p)
+    _require_model(p, "collection", body.model)
     if body.target and ensure_target(p, inv, body.target, user) is None:
         raise HTTPException(422, f"could not detect the type of {body.target!r}")
     if not p.db.one("SELECT 1 AS x FROM targets WHERE investigation_id = ?", (investigation_id,)):
         raise HTTPException(422, "add a target first (or pass one as 'target')")
     run_id = p.agents.start(inv, "collection", body.goal, user, body.max_tool_calls,
-                            body.costly_connectors)
+                            body.costly_connectors, model=body.model)
     return {"run_id": run_id, "kind": "collection"}
 
 
@@ -45,13 +49,13 @@ async def deep(investigation_id: str, body: DeepRequest,
     """Deep analysis: an orchestrator dispatches parallel worker agents, then the
     report agent writes the report (docs/02-architecture.md, mode 4)."""
     inv = load_investigation(p, investigation_id)
-    _require_claude(p)
+    _require_model(p, "deep", body.model)
     if body.target and ensure_target(p, inv, body.target, user) is None:
         raise HTTPException(422, f"could not detect the type of {body.target!r}")
     if not p.db.one("SELECT 1 AS x FROM targets WHERE investigation_id = ?", (investigation_id,)):
         raise HTTPException(422, "add a target first (or pass one as 'target')")
     run_id = p.agents.start(inv, "deep", body.goal, user, body.max_tool_calls,
-                            body.costly_connectors)
+                            body.costly_connectors, model=body.model)
     return {"run_id": run_id, "kind": "deep"}
 
 
@@ -61,11 +65,11 @@ async def report_agent(investigation_id: str, body: ReportAgentRequest,
     """Start the report pipeline: verification, the writer (one dossier, linted report),
     then an independent fact-check and one revision round."""
     inv = load_investigation(p, investigation_id)
-    _require_claude(p)
+    _require_model(p, "report", body.model)
     if not p.db.one("SELECT 1 AS x FROM findings WHERE investigation_id = ?", (investigation_id,)):
         raise HTTPException(422, "nothing collected yet; run a scan or the collection agent first")
     run_id = p.agents.start(inv, "report", body.goal, user, body.max_tool_calls,
-                            verify=body.verify, review=body.review)
+                            verify=body.verify, review=body.review, model=body.model)
     return {"run_id": run_id, "kind": "report"}
 
 
@@ -74,8 +78,8 @@ async def verify(investigation_id: str, body: VerifyRequest,
                  p: Platform = Depends(get_platform), user: str = Depends(current_user)):
     """Start the verification agent: a verdict on every entity worth one."""
     inv = load_investigation(p, investigation_id)
-    _require_claude(p)
-    run_id = p.agents.start(inv, "verify", body.goal, user, body.max_tool_calls)
+    _require_model(p, "verify", body.model)
+    run_id = p.agents.start(inv, "verify", body.goal, user, body.max_tool_calls, model=body.model)
     return {"run_id": run_id, "kind": "verify"}
 
 

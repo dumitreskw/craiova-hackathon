@@ -221,6 +221,15 @@ CREATE TABLE IF NOT EXISTS social_watches (
     last_error       TEXT
 );
 
+-- Small key/value store for server-wide settings the analyst changes from the
+-- UI (e.g. which model each agent task uses). Values are JSON.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 -- Append-only: who queried what, when, why, and whether it was allowed.
 CREATE TABLE IF NOT EXISTS audit (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -257,6 +266,7 @@ MIGRATIONS = [
     ("social_jobs", "query", "TEXT"),
     ("social_jobs", "platform", "TEXT"),
     ("agent_runs", "transcript", "TEXT NOT NULL DEFAULT '[]'"),
+    ("agent_runs", "model", "TEXT"),
 ]
 
 # Columns removed after a release: (table, column). Dropped on open, so an
@@ -331,6 +341,20 @@ class Database:
 
     def one(self, sql: str, params: tuple | list = ()) -> dict[str, Any] | None:
         return row_to_dict(self.conn.execute(sql, params).fetchone())
+
+    # --- settings (key/value) -----------------------------------------------
+
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        row = self.conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return json.loads(row[0]) if row else default
+
+    def set_setting(self, key: str, value: Any, user: str) -> None:
+        self.conn.execute(
+            "INSERT INTO app_settings (key, value, updated_by, updated_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+            "updated_by = excluded.updated_by, updated_at = excluded.updated_at",
+            (key, json.dumps(value, default=str), user, now()))
+        self.conn.commit()
 
     # --- audit --------------------------------------------------------------
 

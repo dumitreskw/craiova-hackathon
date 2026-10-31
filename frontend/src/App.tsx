@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useState } from "react";
-import { FolderSearch, Monitor, Moon, Plus, Sun } from "lucide-react";
+import { Cpu, FolderSearch, Monitor, Moon, Plus, Sun } from "lucide-react";
 import { api, getAnalyst, setAnalyst } from "./api";
 import type { Investigation } from "./types";
 import { CreateInvestigation } from "./components/CreateInvestigation";
 import { CreditsSummary, CreditsView } from "./components/CreditsView";
+import { ModelsView } from "./components/ModelsView";
 import { TABS, Workspace, type Tab } from "./components/Workspace";
 import { Badge, ErrorBox, useLoad, when } from "./components/ui";
 import { go } from "./nav";
 
-type Route = { page: "home" } | { page: "new" } | { page: "sources" } | { page: "inv"; id: string; tab: Tab };
+type Route =
+  | { page: "home" }
+  | { page: "new" }
+  | { page: "sources" }
+  | { page: "models" }
+  | { page: "inv"; id: string; tab: Tab };
 
 function parseHash(): Route {
   const parts = window.location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   if (parts[0] === "new") return { page: "new" };
   if (parts[0] === "sources") return { page: "sources" };
+  if (parts[0] === "models") return { page: "models" };
   if (parts[0] === "inv" && parts[1]) {
     const tab = (TABS as readonly string[]).includes(parts[2]) ? (parts[2] as Tab) : "graph";
     return { page: "inv", id: parts[1], tab };
@@ -115,6 +122,10 @@ export default function App() {
           })}
         </nav>
         <div className="space-y-3 border-t border-line p-3">
+          <a href="#/models" className={`btn btn-quiet btn-sm w-full justify-start ${
+            route.page === "models" ? "bg-raised" : ""}`}>
+            <Cpu className="h-4 w-4" aria-hidden /> Agent models
+          </a>
           <CreditsSummary />
           <div className="px-1">
             <label className="label" htmlFor="analyst">Your name in the audit log</label>
@@ -135,6 +146,7 @@ export default function App() {
         {route.page === "new" && <CreateInvestigation onCreated={onCreated} />}
         {route.page === "home" && <Home list={list} />}
         {route.page === "sources" && <CreditsView />}
+        {route.page === "models" && <ModelsView />}
         {route.page === "inv" && (
           <Workspace key={route.id} id={route.id} tab={route.tab} onChanged={reloadList} />
         )}
@@ -155,6 +167,7 @@ function Home({ list }: { list: Investigation[] | null }) {
         <div className="mt-6 flex gap-2">
           <a href="#/new" className="btn btn-primary"><Plus className="h-4 w-4" aria-hidden /> New investigation</a>
           <a href="#/sources" className="btn">Sources and credits</a>
+          <a href="#/models" className="btn">Agent models</a>
         </div>
         {list && list.length > 0 && (
           <table className="mt-10 w-full border-collapse text-sm">
