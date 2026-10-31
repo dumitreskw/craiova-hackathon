@@ -171,11 +171,13 @@ CREATE TABLE IF NOT EXISTS personas (
 -- Work for the Kali worker, which polls for it (it can't be reached from here).
 CREATE TABLE IF NOT EXISTS social_jobs (
     id               TEXT PRIMARY KEY,
-    kind             TEXT NOT NULL,                       -- capture | login | check
+    kind             TEXT NOT NULL,                       -- capture | login | check | search | interactions
     status           TEXT NOT NULL,                       -- queued | running | done | failed | expired
     persona          TEXT,
     mode             TEXT NOT NULL DEFAULT 'auto',        -- auto | persona | anonymous
     url              TEXT,
+    query            TEXT,                                -- search text (kind = search)
+    platform         TEXT,                                -- target platform (search / interactions)
     investigation_id TEXT REFERENCES investigations(id),
     entity_id        TEXT,
     watch_id         TEXT,
@@ -237,6 +239,8 @@ JSON_COLUMNS = {"settings", "input", "attributes", "stats", "body", "detail",
 # so an existing database file keeps working.
 MIGRATIONS = [
     ("findings", "egress", "TEXT"),
+    ("social_jobs", "query", "TEXT"),
+    ("social_jobs", "platform", "TEXT"),
     ("agent_runs", "transcript", "TEXT NOT NULL DEFAULT '[]'"),
 ]
 

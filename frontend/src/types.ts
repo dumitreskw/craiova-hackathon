@@ -275,7 +275,7 @@ export interface SocialStatus {
   personas: Persona[];
 }
 
-export type SocialJobKind = "capture" | "login" | "check";
+export type SocialJobKind = "capture" | "login" | "check" | "search" | "interactions";
 export type SocialJobStatus = "queued" | "running" | "done" | "failed" | "expired";
 
 export interface SocialJob {

@@ -83,6 +83,9 @@ SOURCE_RELIABILITY: dict[str, float] = {
     "analyst_material": 0.7,
     # Persona/anonymous social capture through the Kali worker (app/social.py).
     "social_capture": 0.85,
+    # Leads from in-platform search / co-engagement: candidates to confirm, not facts.
+    "social_search": 0.5,
+    "social_interactions": 0.55,
 }
 
 

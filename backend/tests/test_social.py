@@ -209,6 +209,76 @@ async def test_persona_capture_marks_persona_used(hub, platform, investigation):
     assert hub.persona("li-ana")["last_used"] is not None
 
 
+async def test_search_folds_candidate_profiles(hub, platform, investigation):
+    import time
+    hub.worker_seen = time.monotonic()
+    hub.create_persona("li-ana", "linkedin", "de", None, "tester")
+    hub.db.update("personas", hub.persona("li-ana")["id"], {"status": "ok"})
+
+    job = hub.search(investigation, "linkedin", "Jane Doe Acme", user="t", run_by="analyst",
+                     persona="li-ana")
+    claimed = await hub.next_job(wait=0)
+    assert claimed["kind"] == "search" and claimed["query"] == "Jane Doe Acme"
+    assert claimed["platform"] == "linkedin" and claimed["persona"]["name"] == "li-ana"
+
+    res = hub.complete(job["id"], {
+        "ok": True, "kind": "search", "platform": "linkedin", "query": "Jane Doe Acme",
+        "persona_used": "li-ana", "search_url": "https://www.linkedin.com/search/...",
+        "results": [{"url": "https://www.linkedin.com/in/jane-doe/", "text": "Jane Doe — Acme"},
+                    {"url": "https://www.linkedin.com/in/janed-99/", "text": "Jane D."},
+                    {"url": "https://www.linkedin.com/feed/", "text": "nav"}],
+        "screenshot_b64": base64.b64encode(PNG).decode(), "duration_ms": 900})
+    assert res["ok"]
+    # Two real profiles become candidate leads; the /feed/ nav link is ignored.
+    jd = platform.db.one("SELECT * FROM entities WHERE type = 'SocialProfile' AND key = ?",
+                         ("linkedin:jane-doe",))
+    assert jd is not None and jd["attributes"].get("lead")
+    assert platform.db.one("SELECT 1 FROM entities WHERE key = ?", ("linkedin:janed-99",))
+    assert platform.db.one("SELECT 1 FROM entities WHERE key = ?", ("linkedin:feed",)) is None
+
+
+async def test_search_needs_logged_in_persona(hub, investigation):
+    import time
+    hub.worker_seen = time.monotonic()
+    with pytest.raises(SocialError, match="needs a logged-in|log it in"):
+        hub.search(investigation, "x", "someone", user="t", run_by="analyst")
+
+
+async def test_interactions_maps_frequent_commenters(hub, platform, investigation):
+    import time, json
+    hub.worker_seen = time.monotonic()
+    url = "https://www.instagram.com/jane.doe/"
+    subject_id = _social_entity(platform, investigation["id"], url)
+
+    job = await hub.map_interactions(investigation, url, user="t", run_by="analyst",
+                                     persona="none")
+    claimed = await hub.next_job(wait=0)
+    assert claimed["kind"] == "interactions" and claimed["url"] == url
+
+    res = hub.complete(job["id"], {
+        "ok": True, "kind": "interactions", "platform": "instagram", "url": url,
+        "persona_used": None, "posts_examined": 5,
+        "interactions": [
+            {"url": "https://www.instagram.com/best.friend/", "name": "BFF", "count": 7},
+            {"url": "https://www.instagram.com/coworker/", "name": "Coworker", "count": 2},
+            {"url": "https://www.instagram.com/jane.doe/", "name": "self", "count": 9}],
+        "screenshot_b64": base64.b64encode(PNG).decode(), "duration_ms": 1500})
+    assert res["ok"]
+    # The subject is excluded; commenters become candidate associates.
+    bff = platform.db.one("SELECT * FROM entities WHERE key = ?", ("instagram:best.friend",))
+    assert bff is not None and bff["attributes"]["interactions"][0]["value"] == 7
+    # interacts_with edge from the frequent commenter to the subject.
+    edge = platform.db.one(
+        "SELECT * FROM edges WHERE type = 'interacts_with' AND from_id = ? AND to_id = ?",
+        (bff["id"], subject_id))
+    assert edge is not None and edge["attributes"]["count"] == 7
+    # The higher-frequency commenter is the stronger lead.
+    cw = platform.db.one("SELECT * FROM entities WHERE key = ?", ("instagram:coworker",))
+    assert bff["confidence"] > cw["confidence"]
+    f = platform.db.get("findings", res["finding_id"])
+    assert f["connector"] == "social_interactions"
+
+
 def test_social_profile_worker_registered():
     from app.agent.tools import DISPATCH_WORKER, WORKERS
     assert "social_profile" in WORKERS

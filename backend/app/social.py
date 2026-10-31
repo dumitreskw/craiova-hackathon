@@ -37,6 +37,8 @@ from .ledger import Ledger, RunOutcome
 from .models import new_id, now
 
 CONNECTOR = "social_capture"
+SEARCH_CONNECTOR = "social_search"            # in-platform people/content search via a persona
+INTERACTIONS_CONNECTOR = "social_interactions"  # co-engagement: who comments on the target's posts
 
 WORKER_STALE_S = 75            # no heartbeat for this long = worker offline
 CAPTURE_TIMEOUT_S = 240        # queued + running, for a capture someone waits on
@@ -60,7 +62,11 @@ _URL = re.compile(r"^https?://[^\s\"'<>]+$")
 # Path segments that are never a profile handle.
 _NOT_HANDLE = {"in", "company", "pub", "profile.php", "people", "user", "u", "c", "channel",
                "school", "showcase", "pages", "groups", "hashtag", "explore", "p", "reel",
-               "status", "watch", "search", "home", "login", "accounts", "i"}
+               "status", "watch", "search", "home", "login", "accounts", "i",
+               # app/navigation paths that look like a handle but aren't a profile
+               "feed", "messaging", "mynetwork", "notifications", "jobs", "settings", "help",
+               "legal", "about", "share", "sharing", "learning", "games", "directory",
+               "posts", "events", "marketplace", "stories", "reels", "tv", "web"}
 
 
 def platform_of(url: str) -> str | None:
@@ -210,9 +216,11 @@ class SocialHub:
     def enqueue(self, kind: str, *, user: str, run_by: str, persona: str | None = None,
                 url: str | None = None, investigation_id: str | None = None,
                 entity_id: str | None = None, watch_id: str | None = None,
-                mode: str = "auto") -> dict[str, Any]:
+                mode: str = "auto", query: str | None = None,
+                platform: str | None = None) -> dict[str, Any]:
         row = {"id": new_id("sj"), "kind": kind, "status": "queued", "persona": persona,
-               "mode": mode, "url": url, "investigation_id": investigation_id,
+               "mode": mode, "url": url, "query": query, "platform": platform,
+               "investigation_id": investigation_id,
                "entity_id": entity_id, "watch_id": watch_id, "requested_by": user,
                "run_by": run_by, "created_at": now(), "started_at": None,
                "finished_at": None, "error": None, "finding_id": None, "result": {}}
@@ -255,9 +263,10 @@ class SocialHub:
 
     def _job_for_worker(self, row: dict[str, Any]) -> dict[str, Any]:
         persona = self.persona(row["persona"]) if row["persona"] else None
+        platform = row.get("platform") or (platform_of(row["url"]) if row["url"] else None) \
+            or (persona["platform"] if persona else None)
         return {"id": row["id"], "kind": row["kind"], "url": row["url"], "mode": row["mode"],
-                "platform": platform_of(row["url"]) if row["url"] else
-                (persona["platform"] if persona else None),
+                "query": row.get("query"), "platform": platform,
                 "persona": {k: persona[k] for k in ("name", "platform", "region")}
                 if persona else None}
 
@@ -408,6 +417,71 @@ class SocialHub:
                                                           "error": "timed out"})
             return RunOutcome(None, None, error="the Kali worker did not finish in time")
 
+    # --- search & interaction mapping --------------------------------------------------
+
+    def search(self, investigation: dict, platform: str, query: str, *, user: str,
+               run_by: str, persona: str | None = None,
+               entity_id: str | None = None) -> dict[str, Any]:
+        """Queue an in-platform people/content search through a persona (logged in).
+
+        Results come back as *candidate* SocialProfile leads for the analyst to
+        confirm — the platform's own search sees what public web search can't.
+        """
+        if platform not in PLATFORMS:
+            raise SocialError(f"platform must be one of {', '.join(PLATFORMS)}")
+        query = (query or "").strip()
+        if len(query) < 2:
+            raise SocialError("query is too short")
+        if persona and persona != "none":
+            row = self.persona(persona)
+            if row is None:
+                raise SocialError(f"no persona '{persona}'")
+            if row["platform"] != platform:
+                raise SocialError(f"persona '{persona}' is for {row['platform']}, "
+                                  f"not {platform}")
+            if row["status"] != "ok":
+                raise SocialError(f"persona '{persona}' is {row['status']}; log it in first")
+        elif persona is None:
+            row = self._pick_persona(platform)
+            persona = row["name"] if row else None
+        else:  # "none"
+            persona = None
+        if not persona:
+            raise SocialError(f"in-platform search needs a logged-in {platform} persona")
+        if not self.online():
+            raise SocialError("the Kali worker is offline")
+        job = self.enqueue("search", user=user, run_by=run_by, persona=persona,
+                           query=query, platform=platform,
+                           investigation_id=investigation["id"], entity_id=entity_id,
+                           mode="persona")
+        self.db.audit(user=user, action=f"{SEARCH_CONNECTOR}.request",
+                      investigation_id=investigation["id"], connector=SEARCH_CONNECTOR,
+                      target=query, detail={"platform": platform, "persona": persona,
+                                            "run_by": run_by, "job_id": job["id"]})
+        self.bus.publish(investigation["id"], "tool.started",
+                         {"connector": SEARCH_CONNECTOR, "input": {"arg": query},
+                          "by": run_by, "job_id": job["id"]})
+        return job
+
+    async def map_interactions(self, investigation: dict, url: str, *, user: str,
+                               run_by: str, persona: str | None = None,
+                               entity_id: str | None = None) -> dict[str, Any]:
+        """Queue a co-engagement map: who comments on the target profile's recent posts."""
+        subject_id, persona, mode = self._prepare(investigation, url, persona, entity_id,
+                                                  user, run_by)
+        job = self.enqueue("interactions", user=user, run_by=run_by, persona=persona,
+                           url=url, platform=platform_of(url),
+                           investigation_id=investigation["id"], entity_id=subject_id,
+                           mode=mode)
+        self.db.audit(user=user, action=f"{INTERACTIONS_CONNECTOR}.request",
+                      investigation_id=investigation["id"], connector=INTERACTIONS_CONNECTOR,
+                      target=url, detail={"persona": persona, "run_by": run_by,
+                                          "job_id": job["id"]})
+        self.bus.publish(investigation["id"], "tool.started",
+                         {"connector": INTERACTIONS_CONNECTOR, "input": {"arg": url},
+                          "by": run_by, "job_id": job["id"]})
+        return job
+
     # --- results from the worker -------------------------------------------------------
 
     def complete(self, job_id: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -419,6 +493,10 @@ class SocialHub:
         self.worker_seen = time.monotonic()
         if job["kind"] in ("login", "check"):
             return self._complete_session(job, body)
+        if job["kind"] == "search":
+            return self._complete_search(job, body)
+        if job["kind"] == "interactions":
+            return self._complete_interactions(job, body)
         return self._complete_capture(job, body)
 
     def _complete_session(self, job: dict, body: dict) -> dict:
@@ -483,6 +561,177 @@ class SocialHub:
                      result={"login_wall": body.get("login_wall"),
                              "persona_used": body.get("persona_used")})
         return {"ok": not error, "finding_id": outcome.finding_id}
+
+    def _save_png(self, inv_id: str, b64: str) -> tuple[str, str]:
+        """Write a base64 PNG into the evidence store; returns (filename, sha256)."""
+        png = base64.b64decode(b64, validate=True)
+        if not png.startswith(b"\x89PNG"):
+            raise ValueError("screenshot is not a PNG")
+        digest = hashlib.sha256(png).hexdigest()
+        filename = f"{digest[:20]}.png"
+        shots = screenshot_dir(self.ledger, inv_id)
+        shots.mkdir(parents=True, exist_ok=True)
+        (shots / filename).write_bytes(png)
+        return filename, digest
+
+    def _complete_search(self, job: dict, body: dict) -> dict:
+        investigation = self.db.get("investigations", job["investigation_id"])
+        if investigation is None:
+            self._finish(job["id"], "failed", "investigation is gone")
+            return {"ok": False}
+        call = {"arg": job["query"], "persona": body.get("persona_used"),
+                "platform": job["platform"]}
+        result = error = None
+        if body.get("ok"):
+            try:
+                result = self._search_result(investigation, job, body)
+            except (ValueError, KeyError, TypeError) as e:
+                error = f"bad worker result: {e}"[:500]
+        else:
+            error = str(body.get("error") or "search failed")[:500]
+        outcome = self.ledger.record(investigation, SEARCH_CONNECTOR, call, result, error,
+                                     user=job["requested_by"], run_by=job["run_by"],
+                                     entity_id=job["entity_id"], passive=True,
+                                     duration_ms=int(body.get("duration_ms") or 0))
+        if outcome.finding_id:
+            self.db.update("findings", outcome.finding_id,
+                           {"egress": _egress_label(body.get("egress"))
+                            or self.ledger.settings.egress_label})
+        self._mark_persona(body)
+        waiter = self._waiters.pop(job["id"], None)
+        if waiter and not waiter.done():
+            waiter.set_result(outcome)
+        self._finish(job["id"], "done" if not error else "failed", error,
+                     finding_id=outcome.finding_id,
+                     result={"results": len(body.get("results") or []),
+                             "login_wall": body.get("login_wall")})
+        return {"ok": not error, "finding_id": outcome.finding_id}
+
+    def _search_result(self, investigation: dict, job: dict, body: dict) -> ConnectorResult:
+        platform = job["platform"]
+        entities: list[EntityCandidate] = []
+        rels: list[RelationshipCandidate] = []
+        seen: set[str] = set()
+        for r in body.get("results") or []:
+            link = r.get("url") if isinstance(r, dict) else None
+            key = profile_key(link) if isinstance(link, str) else None
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            name = (r.get("text") or "").strip()[:200] or None
+            entities.append(EntityCandidate(
+                EntityType.SOCIAL_PROFILE, key,
+                {"platform": platform_of(link) or platform, "url": link,
+                 "display_name": name, "lead": "search"},
+                match_quality=0.4))
+        if body.get("screenshot_b64"):
+            fn, digest = self._save_png(investigation["id"], body["screenshot_b64"])
+            entities.append(EntityCandidate(EntityType.DOCUMENT, digest, {
+                "kind": "screenshot", "url": body.get("search_url"), "file": fn,
+                "sha256": digest, "captured_at": body.get("captured_at")}))
+        note = (f"{len(seen)} candidate {platform} profile(s) for '{job['query']}' — "
+                "leads to confirm, not verified matches")
+        if body.get("login_wall"):
+            note = "search hit a login wall; persona may be logged out — " + note
+        elif not seen:
+            note = f"no {platform} profiles parsed for '{job['query']}' (markup may have changed)"
+        raw = {"platform": platform, "query": job["query"], "search_url": body.get("search_url"),
+               "persona": body.get("persona_used"), "login_wall": bool(body.get("login_wall")),
+               "results": body.get("results") or [], "captured_at": body.get("captured_at")}
+        return ConnectorResult(source=SEARCH_CONNECTOR, passive=True, raw=raw,
+                               entities=entities, relationships=rels, note=note)
+
+    def _complete_interactions(self, job: dict, body: dict) -> dict:
+        investigation = self.db.get("investigations", job["investigation_id"])
+        if investigation is None:
+            self._finish(job["id"], "failed", "investigation is gone")
+            return {"ok": False}
+        call = {"arg": job["url"], "persona": body.get("persona_used")}
+        result = error = None
+        if body.get("ok"):
+            try:
+                result = self._interactions_result(investigation, job, body)
+            except (ValueError, KeyError, TypeError) as e:
+                error = f"bad worker result: {e}"[:500]
+        else:
+            error = str(body.get("error") or "interaction mapping failed")[:500]
+        outcome = self.ledger.record(investigation, INTERACTIONS_CONNECTOR, call, result, error,
+                                     user=job["requested_by"], run_by=job["run_by"],
+                                     entity_id=job["entity_id"], passive=True,
+                                     duration_ms=int(body.get("duration_ms") or 0))
+        if outcome.finding_id:
+            self.db.update("findings", outcome.finding_id,
+                           {"egress": _egress_label(body.get("egress"))
+                            or self.ledger.settings.egress_label})
+        self._mark_persona(body)
+        waiter = self._waiters.pop(job["id"], None)
+        if waiter and not waiter.done():
+            waiter.set_result(outcome)
+        self._finish(job["id"], "done" if not error else "failed", error,
+                     finding_id=outcome.finding_id,
+                     result={"associates": len(body.get("interactions") or []),
+                             "posts_examined": body.get("posts_examined")})
+        return {"ok": not error, "finding_id": outcome.finding_id}
+
+    def _interactions_result(self, investigation: dict, job: dict,
+                             body: dict) -> ConnectorResult:
+        subject = self.db.get("entities", job["entity_id"]) if job["entity_id"] else None
+        subject_key = subject["key"] if subject and \
+            subject["type"] == EntityType.SOCIAL_PROFILE.value else profile_key(job["url"])
+        entities: list[EntityCandidate] = []
+        rels: list[RelationshipCandidate] = []
+        if subject_key:
+            entities.append(EntityCandidate(EntityType.SOCIAL_PROFILE, subject_key,
+                                            {"platform": platform_of(job["url"]),
+                                             "url": job["url"]}))
+        ranked = [i for i in (body.get("interactions") or []) if isinstance(i, dict)]
+        for i in ranked:
+            link = i.get("url")
+            key = profile_key(link) if isinstance(link, str) else None
+            count = int(i.get("count") or 0)
+            if not key or key == subject_key or count <= 0:
+                continue
+            # More interactions → stronger lead, capped; still a candidate to confirm.
+            mq = min(0.35 + 0.08 * count, 0.8)
+            entities.append(EntityCandidate(
+                EntityType.SOCIAL_PROFILE, key,
+                {"platform": platform_of(link), "url": link,
+                 "display_name": (i.get("name") or "").strip()[:200] or None,
+                 "interactions": count, "lead": "co-engagement"},
+                match_quality=mq))
+            if subject_key:
+                rels.append(RelationshipCandidate(
+                    "interacts_with", EntityType.SOCIAL_PROFILE, key,
+                    EntityType.SOCIAL_PROFILE, subject_key,
+                    {"count": count, "basis": "comments/replies on the target's posts"}))
+        if body.get("screenshot_b64"):
+            fn, digest = self._save_png(investigation["id"], body["screenshot_b64"])
+            entities.append(EntityCandidate(EntityType.DOCUMENT, digest, {
+                "kind": "screenshot", "url": job["url"], "file": fn, "sha256": digest,
+                "captured_at": body.get("captured_at")}))
+        posts = body.get("posts_examined") or 0
+        top = ", ".join(f"{(i.get('name') or profile_key(i.get('url')) or '?')}×{i.get('count')}"
+                        for i in ranked[:5])
+        note = (f"co-engagement across {posts} post(s): {len([r for r in rels])} frequent "
+                f"interactor(s) — likely-close-circle leads, not confirmed. Top: {top}"
+                if rels else
+                f"no commenters parsed across {posts} post(s) (login wall or changed markup)")
+        raw = {"platform": job["platform"], "url": job["url"], "persona": body.get("persona_used"),
+               "login_wall": bool(body.get("login_wall")), "posts_examined": posts,
+               "interactions": ranked, "captured_at": body.get("captured_at")}
+        return ConnectorResult(source=INTERACTIONS_CONNECTOR, passive=True, raw=raw,
+                               entities=entities, relationships=rels, note=note)
+
+    def _mark_persona(self, body: dict) -> None:
+        if not body.get("persona_used"):
+            return
+        persona = self.persona(body["persona_used"])
+        if not persona:
+            return
+        values: dict[str, Any] = {"last_used": now()}
+        if body.get("session") in ("logged_out", "checkpoint"):
+            values.update(status="needs_login", status_at=now())
+        self.db.update("personas", persona["id"], values)
 
     def _result(self, investigation: dict, job: dict, body: dict) -> ConnectorResult:
         inv_id = investigation["id"]

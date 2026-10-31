@@ -188,9 +188,11 @@ WORKERS: dict[str, dict] = {
     "social_profile": {
         "tools": [],
         "reads_findings": True,
-        "focus": "the target's tendencies from their captured public social profiles. "
-                 "First `list_findings` with connector=social_capture, then `get_finding` "
-                 "on each to read the profile fields, post text, links and change history. "
+        "focus": "the target's tendencies and close circle from their captured public "
+                 "social profiles. Read the `social_capture` findings (`list_findings` then "
+                 "`get_finding`) for profile fields, post text, links and change history, and "
+                 "the `social_interactions` findings for who comments on their posts most "
+                 "(likely-close-circle leads, ranked by count). "
                  "Build a picture: hobbies and activities, habits and routines (including "
                  "when they are active), interests and the topics they post about, who and "
                  "what they engage with, places and past history they reveal, language and "
@@ -499,6 +501,18 @@ class ToolBox:
                                "emails": raw.get("emails"),
                                "socials": raw.get("socials"),
                                "text": text[:12000] + (" [...]" if len(text) > 12000 else "")},
+                              default=str, ensure_ascii=False)
+        if f["connector"] == "social_interactions" and isinstance(raw, dict):
+            return json.dumps({**{k: f[k] for k in keep}, "url": raw.get("url"),
+                               "platform": raw.get("platform"),
+                               "posts_examined": raw.get("posts_examined"),
+                               "login_wall": raw.get("login_wall"),
+                               "interactions": (raw.get("interactions") or [])[:60]},
+                              default=str, ensure_ascii=False)
+        if f["connector"] == "social_search" and isinstance(raw, dict):
+            return json.dumps({**{k: f[k] for k in keep}, "platform": raw.get("platform"),
+                               "query": raw.get("query"), "login_wall": raw.get("login_wall"),
+                               "results": (raw.get("results") or [])[:60]},
                               default=str, ensure_ascii=False)
         if f["connector"] == "social_capture" and isinstance(raw, dict):
             text = raw.get("text") or ""

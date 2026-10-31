@@ -43,6 +43,20 @@ class WatchCreate(SocialCapture):
     interval_hours: int = Field(24, ge=1, le=24 * 30)
 
 
+class SocialSearch(BaseModel):
+    platform: str
+    query: str = Field(min_length=2, max_length=200)
+    persona: str | None = Field(None, description="persona name, or empty to auto-pick a "
+                                                  "healthy one for the platform")
+    entity_id: str | None = Field(None, description="person the search is about, to link leads")
+
+
+class InteractionMap(BaseModel):
+    url: str = Field(min_length=8, max_length=2000, description="the target's profile URL")
+    persona: str | None = None
+    entity_id: str | None = None
+
+
 class WatchUpdate(BaseModel):
     active: bool | None = None
     interval_hours: int | None = Field(None, ge=1, le=24 * 30)
@@ -119,6 +133,35 @@ async def capture_profile(investigation_id: str, body: SocialCapture,
     return {"finding": finding,
             "raw": outcome.result.raw if outcome.result else None,
             "note": outcome.result.note if outcome.result else None}
+
+
+@router.post("/investigations/{investigation_id}/social/search", status_code=202)
+async def social_search(investigation_id: str, body: SocialSearch,
+                        p: Platform = Depends(get_platform), user: str = Depends(current_user)):
+    """Queue an in-platform people search through a persona. Leads arrive as candidate
+    SocialProfile nodes when the worker finishes (watch the jobs list / stream)."""
+    inv = load_investigation(p, investigation_id)
+    try:
+        job = p.social.search(inv, body.platform, body.query, user=user, run_by="analyst",
+                              persona=body.persona, entity_id=body.entity_id)
+    except SocialError as e:
+        raise _err(e, 409 if "offline" in str(e) or "log it in" in str(e) else 422) from e
+    return {"job_id": job["id"], "status": job["status"]}
+
+
+@router.post("/investigations/{investigation_id}/social/interactions", status_code=202)
+async def social_interactions(investigation_id: str, body: InteractionMap,
+                              p: Platform = Depends(get_platform),
+                              user: str = Depends(current_user)):
+    """Queue a co-engagement map of a target profile (who comments on its recent posts).
+    Frequent interactors arrive as candidate associates with interacts_with edges."""
+    inv = load_investigation(p, investigation_id)
+    try:
+        job = await p.social.map_interactions(inv, body.url, user=user, run_by="analyst",
+                                              persona=body.persona, entity_id=body.entity_id)
+    except SocialError as e:
+        raise _err(e, 409 if "offline" in str(e) else 422) from e
+    return {"job_id": job["id"], "status": job["status"]}
 
 
 @router.get("/investigations/{investigation_id}/social/jobs")

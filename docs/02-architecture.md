@@ -150,8 +150,23 @@ a note on the finding. Personas are logged in once, by hand, in a visible
 browser on Kali's desktop (a `login` job); terms-of-service and ban risk make
 every persona disposable.
 
+**In-platform search.** A `search` job runs a platform's own people search
+through a logged-in persona (LinkedIn/X/Facebook/Instagram/TikTok/…), reaching
+profiles the public web can't index. Result cards fold in as **candidate**
+`SocialProfile` leads (low confidence, `lead: search`) for the analyst to
+confirm — distinct from `dork_search`, which finds profiles via public search
+engines without a login.
+
+**Close circle (co-engagement).** An `interactions` job opens a target profile's
+recent posts and tallies who comments/replies across them. Frequent interactors
+fold in as candidate associates with an `interacts_with` edge weighted by count
+(`basis: comments/replies on the target's posts`) — a far better "close contact"
+signal than follower lists (which platforms mostly gate). These are weighted
+leads, not asserted friendships.
+
 **Tendencies.** A deep-analysis worker, `social_profile`, reads the target's
-`social_capture` findings (and their change history) and synthesizes a profile —
+`social_capture` and `social_interactions` findings (and change history) and
+synthesizes a profile —
 hobbies, habits and active hours, interests and topics, people/places/orgs they
 engage with, past, language and tone, and leanings such as politics or religion.
 It runs no connectors; it only reads findings and writes a summary that flows

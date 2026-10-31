@@ -397,6 +397,166 @@ _HOME = {"linkedin": "https://www.linkedin.com/login", "facebook": "https://www.
 _SESSION_COOKIES = {"li_at", "c_user", "xs", "sessionid", "auth_token", "sid",
                     "sessionid_ss", "__secure-3psid", "reddit_session", "token_v2"}
 
+# In-platform people/content search (logged in via the persona). {q} = url-encoded query.
+SEARCH_URLS = {
+    "linkedin": "https://www.linkedin.com/search/results/people/?keywords={q}",
+    "x": "https://x.com/search?q={q}&f=user",
+    "facebook": "https://www.facebook.com/search/people/?q={q}",
+    "instagram": "https://www.instagram.com/explore/search/keyword/?q={q}",
+    "tiktok": "https://www.tiktok.com/search/user?q={q}",
+    "threads": "https://www.threads.net/search?q={q}&filter=users",
+    "reddit": "https://www.reddit.com/search/?q={q}&type=user",
+    "youtube": "https://www.youtube.com/results?search_query={q}",
+}
+# A link is a profile on this platform if its path's first segment looks like a handle.
+PROFILE_HREF = {
+    "linkedin": r"linkedin\.com/(in|company|school)/[^/?#]+",
+    "x": r"(x|twitter)\.com/[A-Za-z0-9_]{2,15}(/|$|\?)",
+    "facebook": r"facebook\.com/(profile\.php\?id=\d+|[A-Za-z0-9.]{3,})",
+    "instagram": r"instagram\.com/[A-Za-z0-9._]{2,}",
+    "tiktok": r"tiktok\.com/@[A-Za-z0-9._]{2,}",
+    "threads": r"threads\.(net|com)/@[A-Za-z0-9._]{2,}",
+    "reddit": r"reddit\.com/(user|u)/[A-Za-z0-9_-]{3,}",
+    "youtube": r"youtube\.com/(@[A-Za-z0-9._-]+|channel/[^/?#]+)",
+}
+# Post/status permalinks, to find a profile's recent posts for co-engagement mapping.
+POST_HREF = {
+    "x": r"(x|twitter)\.com/[A-Za-z0-9_]+/status/\d+",
+    "instagram": r"instagram\.com/(p|reel)/[^/?#]+",
+    "facebook": r"facebook\.com/[^/]+/(posts|videos)/[^/?#]+|facebook\.com/permalink\.php\?",
+    "tiktok": r"tiktok\.com/@[A-Za-z0-9._]+/video/\d+",
+    "threads": r"threads\.(net|com)/@[A-Za-z0-9._]+/post/[^/?#]+",
+    "linkedin": r"linkedin\.com/(posts|feed/update)/[^/?#]+",
+    "reddit": r"reddit\.com/r/[^/]+/comments/[^/?#]+",
+}
+MAX_POSTS = 6            # posts opened per interaction-mapping job
+COMMENT_SCROLLS = 8      # how far to scroll a post to load comments
+
+
+def _harvest(page, pattern: str) -> list[dict]:
+    """All links on the page whose href matches ``pattern``, with their text."""
+    try:
+        return page.evaluate(
+            """(re) => {
+                const rx = new RegExp(re, 'i');
+                const seen = {};
+                for (const a of document.querySelectorAll('a[href]')) {
+                    const href = a.href;
+                    if (!rx.test(href)) continue;
+                    const text = (a.innerText || a.getAttribute('aria-label') || '').trim();
+                    if (!seen[href] || (text && !seen[href].text)) seen[href] = {url: href, text};
+                }
+                return Object.values(seen);
+            }""", pattern) or []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def search(job: dict) -> dict:
+    """Run the platform's own people search (logged in) and return result cards."""
+    from playwright.sync_api import sync_playwright
+
+    persona = (job.get("persona") or {}).get("name")
+    platform = job.get("platform") or (job.get("persona") or {}).get("platform")
+    query = (job.get("query") or "").strip()
+    if not query or platform not in SEARCH_URLS:
+        return {"ok": False, "error": f"search not supported for platform {platform!r}"}
+    from urllib.parse import quote
+    url = SEARCH_URLS[platform].format(q=quote(query))
+    started, when = time.monotonic(), now()
+    with sync_playwright() as pw:
+        if persona:
+            ctx = pw.chromium.launch_persistent_context(
+                str(persona_profile(persona)), viewport=VIEWPORT, locale="en-US",
+                **_launch_kwargs(True))
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        else:
+            browser = pw.chromium.launch(**_launch_kwargs(True))
+            ctx = browser.new_context(viewport=VIEWPORT, locale="en-US")
+            page = ctx.new_page()
+        resp = page.goto(url, wait_until="domcontentloaded", timeout=CAPTURE_NAV_MS)
+        page.wait_for_timeout(SETTLE_MS)
+        for _ in range(SCROLL_STEPS):
+            page.mouse.wheel(0, VIEWPORT["height"])
+            page.wait_for_timeout(700)
+        status = resp.status if resp else None
+        body = page.inner_text("body")[:4000].lower() if page.query_selector("body") else ""
+        wall = any(p in body for p in LOGIN_WALL)
+        blocked = any(b in body for b in BLOCK) or status in (401, 403, 429, 503)
+        results = _harvest(page, PROFILE_HREF[platform])
+        png = _shot(page, url, when, persona)
+        ctx.close()
+    return {"ok": True, "kind": "search", "platform": platform, "query": query,
+            "search_url": url, "http_status": status, "login_wall": wall, "blocked": blocked,
+            "persona_used": persona, "captured_at": when, "results": results[:60],
+            "screenshot_b64": base64.b64encode(png).decode(),
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "session": "logged_out" if (persona and wall) else ("ok" if persona else None)}
+
+
+def interactions(job: dict) -> dict:
+    """Open a profile's recent posts and tally who comments/replies (co-engagement)."""
+    from playwright.sync_api import sync_playwright
+    from urllib.parse import urlparse
+
+    url = job["url"]
+    persona = (job.get("persona") or {}).get("name")
+    platform = job.get("platform")
+    started, when = time.monotonic(), now()
+    subject_path = urlparse(url).path.rstrip("/").lower()
+    tally: dict[str, dict] = {}
+    posts_examined = 0
+    with sync_playwright() as pw:
+        if persona:
+            ctx = pw.chromium.launch_persistent_context(
+                str(persona_profile(persona)), viewport=VIEWPORT, locale="en-US",
+                **_launch_kwargs(True))
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        else:
+            browser = pw.chromium.launch(**_launch_kwargs(True))
+            ctx = browser.new_context(viewport=VIEWPORT, locale="en-US")
+            page = ctx.new_page()
+        resp = page.goto(url, wait_until="domcontentloaded", timeout=CAPTURE_NAV_MS)
+        page.wait_for_timeout(SETTLE_MS)
+        for _ in range(SCROLL_STEPS):
+            page.mouse.wheel(0, VIEWPORT["height"])
+            page.wait_for_timeout(700)
+        status = resp.status if resp else None
+        body = page.inner_text("body")[:4000].lower() if page.query_selector("body") else ""
+        wall = any(p in body for p in LOGIN_WALL)
+        blocked = any(b in body for b in BLOCK) or status in (401, 403, 429, 503)
+        post_pat = POST_HREF.get(platform or "")
+        post_urls = [r["url"] for r in _harvest(page, post_pat)][:MAX_POSTS] if post_pat else []
+        png = _shot(page, url, when, persona)
+        prof_pat = PROFILE_HREF.get(platform or "", r"https?://")
+        for post_url in post_urls:
+            try:
+                page.goto(post_url, wait_until="domcontentloaded", timeout=CAPTURE_NAV_MS)
+                page.wait_for_timeout(SETTLE_MS)
+                for _ in range(COMMENT_SCROLLS):
+                    page.mouse.wheel(0, VIEWPORT["height"])
+                    page.wait_for_timeout(500)
+                posts_examined += 1
+                for prof in _harvest(page, prof_pat):
+                    ppath = urlparse(prof["url"]).path.rstrip("/").lower()
+                    if ppath == subject_path or not ppath:
+                        continue  # skip the target themselves
+                    t = tally.setdefault(prof["url"], {"url": prof["url"], "name": prof["text"],
+                                                       "count": 0})
+                    t["count"] += 1
+                    if prof["text"] and not t["name"]:
+                        t["name"] = prof["text"]
+            except Exception as e:  # noqa: BLE001 - a post may be gone/gated
+                log("interactions post error:", repr(e)[:120])
+        ctx.close()
+    ranked = sorted(tally.values(), key=lambda t: t["count"], reverse=True)[:60]
+    return {"ok": True, "kind": "interactions", "platform": platform, "url": url,
+            "final_url": url, "http_status": status, "login_wall": wall, "blocked": blocked,
+            "persona_used": persona, "captured_at": when, "posts_examined": posts_examined,
+            "interactions": ranked, "screenshot_b64": base64.b64encode(png).decode(),
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "session": "logged_out" if (persona and wall) else ("ok" if persona else None)}
+
 
 # --------------------------------------------------------------------------- #
 # Main loop
@@ -416,8 +576,9 @@ def do_job(job: dict) -> dict:
     kind = job.get("kind")
     region = (job.get("persona") or {}).get("region")
     status = mullvad_status()
-    if kind in ("capture", "check") and require_vpn() and not status.get("connected"):
-        return {"ok": False, "error": "Mullvad VPN is not connected; refusing to capture",
+    if kind in ("capture", "check", "search", "interactions") and require_vpn() \
+            and not status.get("connected"):
+        return {"ok": False, "error": "Mullvad VPN is not connected; refusing to run",
                 "egress": egress()}
     if job.get("persona") and region:
         if not region_ok(region, status):
@@ -430,6 +591,10 @@ def do_job(job: dict) -> dict:
     try:
         if kind == "capture":
             result = capture(job)
+        elif kind == "search":
+            result = search(job)
+        elif kind == "interactions":
+            result = interactions(job)
         elif kind == "login":
             result = login(job)
         elif kind == "check":

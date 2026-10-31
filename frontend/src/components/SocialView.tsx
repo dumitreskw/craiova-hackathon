@@ -96,6 +96,13 @@ export function SocialView({
           }}
           onError={setError}
         />
+        <SearchForm
+          investigationId={investigationId}
+          personas={status?.personas || []}
+          online={!!status?.online}
+          onDone={reloadJobs}
+          onError={setError}
+        />
         <Watches
           investigationId={investigationId}
           watches={watches || []}
@@ -405,6 +412,80 @@ function CaptureResult({ result, investigationId }: { result: SocialCaptureResul
           </ul>
         </div>
       )}
+    </div>
+  );
+}
+
+function SearchForm({
+  investigationId,
+  personas,
+  online,
+  onDone,
+  onError,
+}: {
+  investigationId: string;
+  personas: Persona[];
+  online: boolean;
+  onDone: () => void;
+  onError: (e: unknown) => void;
+}) {
+  const ready = personas.filter((p) => p.status === "ok");
+  const [platform, setPlatform] = useState(ready[0]?.platform || "linkedin");
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const havePersona = ready.some((p) => p.platform === platform);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    onError(null);
+    try {
+      await api.post(`/investigations/${investigationId}/social/search`, {
+        platform,
+        query: query.trim(),
+      });
+      setNotice("Search queued — matches appear as candidate profiles in the graph when the worker finishes.");
+      setQuery("");
+      onDone();
+    } catch (err) {
+      onError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-line p-4">
+      <h2 className="mb-2 font-semibold">Find people on a platform</h2>
+      <p className="mb-2 text-xs text-muted">
+        Runs the platform's own people search through a logged-in persona — reaches profiles the public web
+        can't (LinkedIn especially). Results land as <em>candidate</em> profiles to confirm, linked into the graph.
+      </p>
+      <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
+        <select className="field w-auto" value={platform} onChange={(e) => setPlatform(e.target.value)} aria-label="Platform">
+          {PLATFORM_OPTIONS.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+        <input
+          className="field min-w-[16rem] flex-1 font-mono"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="name, employer, handle…"
+          aria-label="Search query"
+        />
+        <button className="btn btn-primary" disabled={busy || query.trim().length < 2 || !online || !havePersona}>
+          {busy ? "Queuing…" : "Search"}
+        </button>
+      </form>
+      {!havePersona && (
+        <p className="mt-2 text-xs text-warn">
+          Needs a logged-in {platform} persona — add and log one in on the left.
+        </p>
+      )}
+      {notice && <p className="mt-2 text-xs text-muted">{notice}</p>}
     </div>
   );
 }
