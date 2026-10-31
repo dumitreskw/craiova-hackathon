@@ -6,11 +6,49 @@ body,
   min-height: 100%;
 }
 
-/* The hero's one orchestrated moment: the pivot trail resolves fact by fact. */
-@keyframes trail-in {
+html {
+  scroll-behavior: smooth;
+}
+
+/* Depth behind the hero and the closing band: a faint survey grid, lit from
+   the top by the evidence-tag amber. Drawn on a pseudo-element so the fade-out
+   mask never touches the content. */
+.hero-backdrop {
+  position: relative;
+  isolation: isolate;
+}
+
+.hero-backdrop::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(ellipse 60% 55% at 70% 0%, rgb(var(--accent) / 0.14), transparent 70%),
+    linear-gradient(rgb(var(--line) / 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--line) / 0.35) 1px, transparent 1px);
+  background-size: 100% 100%, 44px 44px, 44px 44px;
+  background-position: center top;
+  -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent 75%);
+  mask-image: linear-gradient(to bottom, #000 30%, transparent 75%);
+}
+
+/* The closing band: the glow from below, grid fading upward. */
+.cta-band::before {
+  background-image:
+    radial-gradient(ellipse 70% 80% at 50% 110%, rgb(var(--accent) / 0.16), transparent 70%),
+    linear-gradient(rgb(var(--line) / 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--line) / 0.3) 1px, transparent 1px);
+  -webkit-mask-image: linear-gradient(to top, #000 20%, transparent 95%);
+  mask-image: linear-gradient(to top, #000 20%, transparent 95%);
+}
+
+/* The one orchestrated moment: the hero graph resolves, node by node. */
+@keyframes node-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: scale(0.6);
   }
   to {
     opacity: 1;
@@ -18,28 +56,38 @@ body,
   }
 }
 
-.trail-step {
-  opacity: 0;
-  animation: trail-in 420ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
-  animation-delay: calc(var(--i) * 260ms + 200ms);
-}
-
-@keyframes trail-line {
+@keyframes edge-draw {
   from {
-    transform: scaleY(0);
+    stroke-dashoffset: 1;
   }
   to {
-    transform: scaleY(1);
+    stroke-dashoffset: 0;
   }
 }
 
-.trail-line {
-  transform-origin: top;
-  animation: trail-line 1700ms cubic-bezier(0.3, 0.6, 0.2, 1) 200ms both;
+.graph-node {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0;
+  animation: node-in 460ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  animation-delay: calc(var(--i) * 140ms + 250ms);
+}
+
+.graph-edge:not([stroke-dasharray]) {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: edge-draw 600ms ease-out forwards;
+  animation-delay: calc(var(--i) * 140ms + 450ms);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .trail-step {
+  html {
+    scroll-behavior: auto;
+  }
+  .graph-node {
     opacity: 1;
+  }
+  .graph-edge:not([stroke-dasharray]) {
+    stroke-dashoffset: 0;
   }
 }

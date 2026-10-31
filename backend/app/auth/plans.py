@@ -7,7 +7,8 @@ billing can drive the same field later.
 from __future__ import annotations
 
 PLANS: dict[str, dict] = {
-    "free": {"label": "Free", "seats": 3, "investigations": 5, "api_keys": 2},
+    # No free tier: new workspaces start on a limited trial until a plan is set.
+    "free": {"label": "Trial", "seats": 3, "investigations": 5, "api_keys": 2},
     "team": {"label": "Team", "seats": 15, "investigations": 100, "api_keys": 20},
     "enterprise": {"label": "Enterprise", "seats": None, "investigations": None,
                    "api_keys": None},

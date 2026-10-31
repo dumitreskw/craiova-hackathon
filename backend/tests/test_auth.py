@@ -277,10 +277,10 @@ async def test_admin_generates_an_account(auth_app, kc):
 
 async def test_plan_limits(auth_app, kc):
     alice = await sign_in(auth_app, kc, "alice", "alice@x.test")
-    for _ in range(5):  # free plan: 5 investigations
+    for _ in range(5):  # trial: 5 investigations
         assert (await alice.post("/api/v1/investigations", json=NEW_INV)).status_code == 201
     r = await alice.post("/api/v1/investigations", json=NEW_INV)
-    assert r.status_code == 402 and "Free plan" in r.json()["detail"]
+    assert r.status_code == 402 and "Trial plan" in r.json()["detail"]
 
 
 async def test_platform_admin_claims_legacy_data_and_manages_plans(auth_app, kc, platform):
