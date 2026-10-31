@@ -42,17 +42,25 @@ class KC:
         self.base = base.rstrip("/")
         body = urllib.parse.urlencode({"grant_type": "password", "client_id": "admin-cli",
                                        "username": user, "password": password}).encode()
-        tok = self._raw("POST", f"{self.base}/realms/master/protocol/openid-connect/token",
-                        body, {"Content-Type": "application/x-www-form-urlencoded"})
-        self.token = json.loads(tok[1])["access_token"]
+        status, text, _ = self._raw(
+            "POST", f"{self.base}/realms/master/protocol/openid-connect/token", body,
+            {"Content-Type": "application/x-www-form-urlencoded"})
+        if status != 200:
+            hint = (" (wrong KC_ADMIN_USER / KC_ADMIN_PASSWORD?)" if status in (400, 401)
+                    else " (blocked before Keycloak: a proxy/WAF answered)")
+            sys.exit(f"master-realm admin sign-in failed: HTTP {status}{hint}: {text[:300]}")
+        self.token = json.loads(text)["access_token"]
 
     def _raw(self, method, url, body=None, headers=None):
-        req = urllib.request.Request(url, data=body, method=method, headers=headers or {})
+        # Cloudflare in front of Keycloak rejects urllib's default User-Agent.
+        headers = {"User-Agent": "osint-keycloak-bootstrap/1.0 (+python)",
+                   "Accept": "application/json", **(headers or {})}
+        req = urllib.request.Request(url, data=body, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
-                return r.status, r.read().decode() or "null", dict(r.headers)
+                return r.status, r.read().decode() or "null", {k.lower(): v for k, v in r.headers.items()}
         except urllib.error.HTTPError as e:
-            return e.code, e.read().decode() or "null", dict(e.headers)
+            return e.code, e.read().decode() or "null", {k.lower(): v for k, v in e.headers.items()}
 
     def call(self, method, path, data=None, ok=(200, 201, 204)):
         body = json.dumps(data).encode() if data is not None else None
@@ -152,7 +160,7 @@ def main() -> None:
         print(f"client {CLIENT_ID}: updated")
     else:
         _, headers, _ = kc.call("POST", f"/{REALM}/clients", client_settings(apps))
-        cid = headers["Location"].rstrip("/").rsplit("/", 1)[-1]
+        cid = headers["location"].rstrip("/").rsplit("/", 1)[-1]
         print(f"client {CLIENT_ID}: created")
 
     # Service account: may create and look up users (account generation).
@@ -177,7 +185,7 @@ def main() -> None:
                 "username": email, "email": email, "enabled": True, "emailVerified": True,
                 "firstName": email.split("@")[0], "requiredActions": ["UPDATE_PASSWORD"],
                 "credentials": [{"type": "password", "value": pw, "temporary": True}]})
-            uid = headers["Location"].rstrip("/").rsplit("/", 1)[-1]
+            uid = headers["location"].rstrip("/").rsplit("/", 1)[-1]
             print(f"operator {email}: created, temporary password: {pw}")
         role, _, _ = kc.call("GET", f"/{REALM}/roles/{ADMIN_ROLE}")
         kc.call("POST", f"/{REALM}/users/{uid}/role-mappings/realm", [role])
