@@ -167,7 +167,16 @@ GET    /reports/{rid}/render?audience=internal|client&format=md|html|docx|pdf&ci
                                        pdf: the HTML render printed by headless Chromium
                                        docx/pdf come as attachments: <title>_<audience>_<date>.<ext>
                                        409 on lint errors unless &force=true (audited)
+GET    /reports/{rid}/captures         cited sources with a public page and no screenshot yet
+POST   /reports/{rid}/captures         screenshot those pages now; each capture is attached to
+                                       its evidence entry (body.captures) and shown in every copy
 ```
+
+The two copies differ on purpose: the **internal** copy is the working file
+(claim ids, every status and severity, and per evidence item the finding id,
+hash, payload path, who ran it and which claims cite it, plus the collection
+method); the **client** copy keeps the statements, each source with its public
+page, what it returned, the retrieval date and the page capture.
 
 A report body is a list of sections of **claims**; each claim lists the finding
 ids that support it and a status (`verified | unverified | leaked |
@@ -177,6 +186,7 @@ inference`). See `backend/app/report/__init__.py` and
 ## Admin
 
 ```text
+GET    /health                         {"ok": true, "build": "<first 8 chars of the commit>"}
 GET    /connectors                     list, health, which keys are configured
 GET    /audit?investigation_id=&user=&from=&to=   audit log (append-only)
 POST   /admin/purge-expired            purge investigations past retention (not on legal hold)

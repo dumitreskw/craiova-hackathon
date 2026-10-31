@@ -53,6 +53,7 @@ export default function App() {
   const [theme, cycleTheme] = useTheme();
   const [analyst, setAnalystState] = useState(getAnalyst);
   const [list, listError, , reloadList] = useLoad(() => api.get<Investigation[]>("/investigations"), []);
+  const [health] = useLoad(() => api.get<{ build?: string }>("/health"), []);
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
@@ -77,6 +78,12 @@ export default function App() {
         <a href="#/" className="flex items-center gap-2.5 px-4 pb-3 pt-4">
           <img src="/favicon.svg" alt="" className="h-7 w-7" />
           <span className="text-[15px] font-semibold tracking-tight">OSINT Workbench</span>
+          {health?.build && (
+            <span className="ml-auto rounded border border-line px-1.5 py-px font-mono text-[11px] text-muted"
+              title={`Build ${health.build} (first 8 characters of the commit)`}>
+              {health.build}
+            </span>
+          )}
         </a>
         <div className="px-3 pb-3">
           <a href="#/new" className={`btn btn-primary w-full ${route.page === "new" ? "ring-2 ring-accent/40" : ""}`}>

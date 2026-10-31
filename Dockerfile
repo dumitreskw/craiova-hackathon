@@ -45,6 +45,13 @@ ENV LIGHTPANDA_DISABLE_TELEMETRY=true
 COPY backend/ ./
 COPY --from=frontend /src/frontend/dist /srv/frontend
 
+# Build id (first 8 chars of the commit, shown in the UI and /api/v1/health):
+# the SOURCE_COMMIT build arg when the builder passes one (Coolify can), else
+# read from the .git refs that .dockerignore lets into the context.
+ARG SOURCE_COMMIT=""
+RUN --mount=type=bind,target=/ctx \
+    sh /ctx/docker/build-id.sh "$SOURCE_COMMIT" /ctx/.git > BUILD && cat BUILD
+
 # A real home: subfinder and Lightpanda keep their config/state there.
 RUN useradd --system --uid 10001 --create-home --home-dir /home/osint osint \
     && mkdir -p /data && chown osint /data

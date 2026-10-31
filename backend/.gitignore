@@ -9,3 +9,4 @@ evidence/
 *.sqlite-shm
 # app data: SQLite + evidence files (OSINT_DATA_DIR)
 data/
+BUILD

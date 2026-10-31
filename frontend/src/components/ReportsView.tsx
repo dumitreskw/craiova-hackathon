@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type SyntheticEvent } from "react";
 import {
-  AlertTriangle, CheckCircle2, Download, FilePlus2, FileText, Tag, X,
+  AlertTriangle, Camera, CheckCircle2, Download, FilePlus2, FileText, Tag, X,
 } from "lucide-react";
 import { api, ApiError, download, qs } from "../api";
 import type { InvestigationStream } from "../stream";
@@ -10,10 +10,15 @@ import { ago, Badge, Empty, ErrorBox, Loading, Mono, Segmented, Spinner, useLoad
 
 type Audience = "internal" | "client";
 type Lint = { ok: boolean; issues: LintIssue[] };
+type CaptureState = { pending: { finding: string; url: string }[]; captured: number };
+type CaptureResult = {
+  captured: { finding: string; url: string; capture: string }[];
+  failed: { finding: string; url: string; error: string }[];
+};
 
 const AUDIENCE_HINT: Record<Audience, string> = {
-  internal: "Shows finding ids, hashes, file paths and how the data was collected.",
-  client: "Shows each source and its retrieval date only. No workspace details.",
+  internal: "Working copy: claim ids, every status, finding ids, hashes, file paths and how the data was collected.",
+  client: "For the client: statements, sources with their public pages, what each returned and page captures. No workspace details.",
 };
 
 export function ReportsView({ investigationId, stream }: { investigationId: string; stream: InvestigationStream }) {
@@ -123,7 +128,12 @@ function ReportDetail({ reportId }: { reportId: string }) {
   const [report, error] = useLoad(() => api.get<Report>(`/reports/${reportId}`), [reportId]);
   const [audience, setAudience] = useState<Audience>("internal");
   const [cite, setCite] = useState(true);
-  const [view, setView] = useState<"claims" | "preview">("claims");
+  const [view, setView] = useState<"claims" | "preview">("preview");
+  const [revision, setRevision] = useState(0);
+  const [captures, , , reloadCaptures] = useLoad(
+    () => api.get<CaptureState>(`/reports/${reportId}/captures`), [reportId]);
+  const [capturing, setCapturing] = useState(false);
+  const [captureResult, setCaptureResult] = useState<CaptureResult | null>(null);
   const [internal] = useLoad(() => api.get<Lint>(`/reports/${reportId}/lint${qs({ audience: "internal" })}`), [reportId]);
   const [client] = useLoad(() => api.get<Lint>(`/reports/${reportId}/lint${qs({ audience: "client" })}`), [reportId]);
   const [finding, setFinding] = useState<string | null>(null);
@@ -137,6 +147,20 @@ function ReportDetail({ reportId }: { reportId: string }) {
   const issues = lint?.issues || [];
   const byClaim = new Map<string, LintIssue[]>();
   for (const i of issues) if (i.claim) byClaim.set(i.claim, [...(byClaim.get(i.claim) || []), i]);
+
+  async function captureSources() {
+    setCapturing(true);
+    setCaptureResult(null);
+    try {
+      setCaptureResult(await api.post<CaptureResult>(`/reports/${reportId}/captures`));
+      setRevision((r) => r + 1);
+    } catch (e) {
+      setExportError(e);
+    } finally {
+      setCapturing(false);
+      reloadCaptures();
+    }
+  }
 
   async function exportAs(format: ExportFormat, force = false) {
     setExportError(null);
@@ -159,6 +183,13 @@ function ReportDetail({ reportId }: { reportId: string }) {
             <h2 className="text-[20px] font-semibold leading-tight tracking-tight">{report.title}</h2>
             <p className="mt-1 text-xs text-muted">Updated {when(report.updated_at)} by {report.created_by}</p>
           </div>
+          <button className="btn btn-sm" onClick={captureSources} disabled={capturing || !captures?.pending.length}
+            title={captures?.pending.length
+              ? `Screenshot the public page of ${captures.pending.length} cited source${captures.pending.length === 1 ? "" : "s"}`
+              : "Every cited source with a public page already has a screenshot"}>
+            {capturing ? <Spinner className="h-3.5 w-3.5" /> : <Camera className="h-3.5 w-3.5" aria-hidden />}
+            {capturing ? "Capturing pages" : `Capture screenshots${captures?.pending.length ? ` (${captures.pending.length})` : ""}`}
+          </button>
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Export">
             <span className="mr-1 text-xs text-muted">Export {audience} copy</span>
             {EXPORT_FORMATS.map(([format, label]) => (
@@ -172,7 +203,8 @@ function ReportDetail({ reportId }: { reportId: string }) {
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <Segmented label="Audience" value={audience} onChange={setAudience}
             options={[["internal", "Internal", AUDIENCE_HINT.internal], ["client", "Client", AUDIENCE_HINT.client]]} />
-          <Segmented label="View" value={view} onChange={setView} options={[["claims", "Claims"], ["preview", "Preview"]]} />
+          <Segmented label="View" value={view} onChange={setView}
+            options={[["preview", "Document", "The rendered copy, as its reader gets it"], ["claims", "Review claims", "Each claim with its evidence and lint problems"]]} />
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={cite} onChange={(e) => setCite(e.target.checked)} className="accent-[rgb(var(--accent))]" />
             Citations in the copy
@@ -187,6 +219,21 @@ function ReportDetail({ reportId }: { reportId: string }) {
           window.setTimeout(() => document.getElementById(`claim-${claim}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 50);
         }} />
 
+      {captureResult && (
+        <div className={`flex items-start gap-2 border-b px-6 py-2 text-sm ${captureResult.failed.length ? "border-warn/40 bg-warn/10" : "border-ok/40 bg-ok/10"}`} role="status">
+          {captureResult.failed.length
+            ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden />
+            : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" aria-hidden />}
+          <div className="min-w-0 flex-1">
+            <p>Captured {captureResult.captured.length} source page{captureResult.captured.length === 1 ? "" : "s"}; the screenshots are in the Evidence section.</p>
+            {captureResult.failed.map((f) => (
+              <p key={f.finding} className="truncate text-muted"><Mono>{f.url}</Mono>: {f.error}</p>
+            ))}
+          </div>
+          <button className="rounded p-1 text-muted hover:text-ink" onClick={() => setCaptureResult(null)} aria-label="Dismiss"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+
       {exportError ? (
         <div className="px-6 pt-3">
           <LintBlocked error={exportError} onForce={(f) => exportAs(f, true)} onDismiss={() => setExportError(null)} />
@@ -197,7 +244,7 @@ function ReportDetail({ reportId }: { reportId: string }) {
         {view === "claims" ? (
           <ClaimsView report={report} byClaim={byClaim} onFinding={setFinding} />
         ) : (
-          <Preview reportId={reportId} audience={audience} cite={cite} />
+          <Preview reportId={reportId} audience={audience} cite={cite} revision={revision} />
         )}
       </div>
       {finding && <FindingModal id={finding} onClose={() => setFinding(null)} />}
@@ -351,11 +398,13 @@ function ClaimsView({ report, byClaim, onFinding }: {
   );
 }
 
-function Preview({ reportId, audience, cite }: { reportId: string; audience: Audience; cite: boolean }) {
+function Preview({ reportId, audience, cite, revision }: {
+  reportId: string; audience: Audience; cite: boolean; revision: number;
+}) {
   const [force, setForce] = useState(false);
-  const [html, error] = useLoad(
+  const [html, error, loading] = useLoad(
     () => api.text(`/reports/${reportId}/render${qs({ audience, format: "html", cite, force: force || undefined })}`),
-    [reportId, audience, cite, force],
+    [reportId, audience, cite, force, revision],
   );
   if (error instanceof ApiError && error.status === 409) {
     const issues = ((error.detail as { issues?: LintIssue[] })?.issues || []) as LintIssue[];
@@ -370,9 +419,31 @@ function Preview({ reportId, audience, cite }: { reportId: string; audience: Aud
   if (error) return <div className="p-5"><ErrorBox error={error} /></div>;
   if (html === null) return <Loading>Rendering the {audience} copy</Loading>;
   return (
-    <div className="h-full bg-raised/40 p-4">
-      <iframe title="Report preview" sandbox="" srcDoc={html}
-        className="mx-auto block h-full min-h-[70vh] w-full max-w-4xl rounded-md border border-line bg-white shadow-float" />
+    <div className="relative h-full bg-raised/40 p-4">
+      {/* Scripts stay off; same-origin only so the links below can be wired up. */}
+      <iframe title={`Report preview, ${audience} copy`} srcDoc={html} onLoad={wireLinks}
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+        className={`mx-auto block h-full min-h-[70vh] w-full max-w-4xl rounded-md border border-line bg-white shadow-float transition-opacity ${loading ? "opacity-50" : ""}`} />
     </div>
   );
+}
+
+/**
+ * In a srcdoc frame "#ev5" resolves against the app's URL, so a click would
+ * navigate the frame away. Scroll to the target inside the document instead.
+ */
+function wireLinks(ev: SyntheticEvent<HTMLIFrameElement>) {
+  const doc = ev.currentTarget.contentDocument;
+  if (!doc) return;
+  doc.addEventListener("click", (e) => {
+    const a = (e.target as Element | null)?.closest?.("a");
+    const href = a?.getAttribute("href") || "";
+    if (!href.startsWith("#")) return;
+    e.preventDefault();
+    const target = doc.getElementById(decodeURIComponent(href.slice(1)));
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    target.animate?.([{ boxShadow: "0 0 0 4px rgba(217,149,43,.55)" }, { boxShadow: "0 0 0 0 rgba(217,149,43,0)" }],
+      { duration: 1400, easing: "ease-out" });
+  });
 }

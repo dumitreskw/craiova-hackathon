@@ -34,6 +34,7 @@ DEFAULT_HEADER = "- CONFIDENTIAL -"
 DEFAULT_FOOTER = ("This report is confidential and intended solely for the requesting party. "
                   "It is based on open sources available at the time of collection.")
 RED = RGBColor(0xC0, 0x00, 0x00)
+GREEN = RGBColor(0x14, 0x5C, 0x3C)
 GREY = RGBColor(0x55, 0x55, 0x55)
 TITLE_FILL = "D9D9D9"
 IMAGE_WIDTH = Inches(6.2)
@@ -55,6 +56,8 @@ def filename(title: str, audience: str, date: str, ext: str) -> str:
 # --- DOCX -------------------------------------------------------------------------
 
 def to_docx(blocks: list[tuple[str, Any]]) -> bytes:
+    from . import AUDIENCE_NOTE, claim_text  # the package imports this module lazily
+
     doc = Document()
     _page_setup(doc)
     _base_font(doc)
@@ -65,8 +68,21 @@ def to_docx(blocks: list[tuple[str, Any]]) -> bytes:
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             _run(p, val, bold=True, size=16)
+        elif kind == "audience":
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            label = "INTERNAL WORKING COPY" if val == "internal" else "CLIENT COPY"
+            _run(p, label, bold=True, size=9, color=RED if val == "internal" else GREEN)
+            note = doc.add_paragraph()
+            note.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _run(note, AUDIENCE_NOTE[val], italic=True, size=8, color=GREY)
         elif kind == "meta":
             _meta_table(doc, val)
+        elif kind == "stats":
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _run(p, "   ·   ".join(f"{k}: {v}" for k, v in val.items()), size=9, color=GREY)
+            _spacer(doc)
         elif kind == "h2":
             title = val
         elif kind == "p":
@@ -75,7 +91,8 @@ def to_docx(blocks: list[tuple[str, Any]]) -> bytes:
             _section_table(doc, title, [_Para(val)])
             title = None
         elif kind == "claims":
-            _claims_table(doc, title, val)
+            _claims_table(doc, title, [((f"{c['id']}: " if c["id"] else "") + claim_text(c),
+                                        c["refs"]) for c in val])
             title = None
         elif kind == "ul":
             _section_table(doc, title, [_Para(f"• {x}") for x in val])
@@ -244,19 +261,31 @@ def _claim_text(paragraph, text: str) -> None:
         _run(paragraph, m.group("flag"), bold=True, size=9, color=RED)
 
 
-def _evidence(doc: Document, title: str | None, items: list[tuple[str, Path | None]]) -> None:
+def _evidence(doc: Document, title: str | None, items: list[dict]) -> None:
+    """Numbered evidence: the source line, what it returned, and the page capture."""
     t = _table(doc, 1)
     _title_row(t, title)
     cell = t.add_row().cells[0]
     first = True
-    for line, img in items:
+    for item in items:
         p = cell.paragraphs[0] if first else cell.add_paragraph()
         first = False
-        _run(p, line, italic=img is not None, size=8 if img is not None else 9)
+        p.paragraph_format.space_before = Pt(6)
+        _run(p, item["line"], bold=True, size=9)
+        for etype, fact in item["facts"]:
+            _run(cell.add_paragraph(), f"    {etype}: {fact}", size=8, color=GREY)
+        if item["more"]:
+            _run(cell.add_paragraph(), f"    and {item['more']} more", size=8, color=GREY)
+        img: Path | None = item.get("image")
         if img is not None:
             pic = cell.add_paragraph()
             pic.alignment = WD_ALIGN_PARAGRAPH.CENTER
             pic.add_run().add_picture(str(img), width=IMAGE_WIDTH)
+            cap = cell.add_paragraph()
+            cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _run(cap, f"Evidence [{item['n']}]: page capture"
+                 + (f", {item['shot_date']}" if item.get("shot_date") else ""),
+                 italic=True, size=8, color=GREY)
     _spacer(doc)
 
 
@@ -271,10 +300,9 @@ def _widths(table, widths) -> None:
 
 # --- PDF --------------------------------------------------------------------------
 
-PRINT_CSS = ("<style>@page{size:A4;margin:18mm 16mm}body{max-width:none;margin:0;"
-             "font:11px/1.45 Arial,Helvetica,sans-serif}h1{font-size:20px}h2{font-size:15px;"
-             "margin-top:1.2em;border-bottom:1px solid #999}.evidence{font-size:10px}"
-             ".evidence img{max-width:100%}</style>")
+# The page has its own print rules (app/report/page.py); this only sizes the paper
+# and makes the text a little smaller for A4.
+PRINT_CSS = "<style>@page{size:A4}body{font-size:13px}</style>"
 
 
 async def to_pdf(html: str) -> bytes:

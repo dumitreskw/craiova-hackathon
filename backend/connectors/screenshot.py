@@ -32,7 +32,8 @@ from .base import ConnectorResult, EntityCandidate, EntityType, RelationshipCand
 
 VIEWPORT = {"width": 1366, "height": 900}
 MAX_HEIGHT = 6000          # px; long pages are cut, the banner says so
-NAV_TIMEOUT_MS = 30_000
+NAV_TIMEOUT_MS = 45_000     # until the HTML is parsed
+LOAD_GRACE_MS = 10_000     # then images, fonts, scripts: best effort
 SETTLE_MS = 1500
 
 _BLOCK_STATUS = {401, 403, 429, 503}
@@ -45,6 +46,7 @@ async def screenshot(url: str, out_dir: str | None = None) -> ConnectorResult:
     if not re.match(r"^https?://[^\s\"'<>]+$", url):
         raise ValueError(f"not an http(s) URL: {url!r}")
     try:
+        from playwright.async_api import TimeoutError as PlaywrightTimeout
         from playwright.async_api import async_playwright
     except ImportError as e:  # pragma: no cover - depends on the install
         raise RuntimeError("playwright is not installed (uv sync --extra evidence; "
@@ -62,7 +64,14 @@ async def screenshot(url: str, out_dir: str | None = None) -> ConnectorResult:
         try:
             context = await browser.new_context(viewport=VIEWPORT)
             page = await context.new_page()
-            response = await page.goto(url, wait_until="load", timeout=NAV_TIMEOUT_MS)
+            # Slow servers (crt.sh) and pages with endless trackers: the HTML
+            # is what counts, so capture once it is parsed and give the rest
+            # of the page a bounded chance to finish.
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+            try:
+                await page.wait_for_load_state("load", timeout=LOAD_GRACE_MS)
+            except PlaywrightTimeout:
+                pass
             await page.wait_for_timeout(SETTLE_MS)
             status = response.status if response else None
             title = (await page.title() or "").strip()

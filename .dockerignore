@@ -1,4 +1,8 @@
 .git
+# ...except what the Dockerfile needs to name the build (see "Build id").
+!.git/HEAD
+!.git/refs
+!.git/packed-refs
 .github
 # Never bake env files (secrets, local overrides) into the image.
 **/.env

@@ -16,30 +16,33 @@ A report body is JSON::
         ]}
       ],
       "outstanding": ["follow-ups that need manual or credentialed access"],
-      "method": "internal-only notes on how the data was collected"
+      "method": "internal-only notes on how the data was collected",
+      "captures": {"f_...": "f_..."}       # cited finding -> screenshot of its public page
     }
 
 Why claims and not free text: each claim carries its own evidence, so the
 linter can prove every statement traces to a finding, and the renderer can
 number evidence consistently and print or hide citations per audience.
 
-The ``internal`` render shows citations, finding hashes, raw paths and the
-collection method. The ``client`` render shows the same findings with only the
-source and retrieval date, and no workspace plumbing.
+The ``internal`` render is a working copy: claim ids, every status and
+severity, and per evidence item the finding id, hash, payload path, who ran it
+and which claims cite it, plus the collection method. The ``client`` render
+shows the same statements with only the source, its public page, what it
+returned, the retrieval date and the page capture: no workspace plumbing.
 """
 
 from __future__ import annotations
 
-import base64
-import html
 import re
 from collections import Counter
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from ..models import Database, now
 from ..resolver import best_attributes
 from ..scan import anchor_domains, on_target
+from .page import to_html
 
 STATUSES = {"verified", "unverified", "leaked", "inference"}
 AUDIENCES = {"internal", "client"}
@@ -54,8 +57,17 @@ SOURCE_NAMES = {
     "dork_search": "Public web search", "interpol": "INTERPOL public notices",
     "europol": "EU Most Wanted (ENFAST)", "sanctions": "OpenSanctions",
     "national_wanted": "National police wanted lists",
-    "screenshot": "Page capture",
-    "analyst_material": "Analyst-supplied material",
+    "screenshot": "Page capture", "social_capture": "Social media profile capture",
+    "web_read": "Web page", "analyst_material": "Analyst-supplied material",
+    "anaf": "ANAF company register (Romania)", "vies": "EU VIES VAT register",
+    "gleif": "GLEIF legal entity register", "companies_house": "UK Companies House",
+    "subfinder": "Passive subdomain sources", "urlscan": "urlscan.io",
+    "otx_domain": "AlienVault OTX passive DNS", "otx_ip": "AlienVault OTX passive DNS",
+    "dnstwist": "Lookalike domain check", "hunter": "Hunter.io email index",
+    "tomba": "Tomba.io email index", "dehashed": "DeHashed breach index",
+    "holehe": "Account registration check", "maigret": "Username search",
+    "wayback": "Internet Archive Wayback Machine", "virustotal_domain": "VirusTotal",
+    "virustotal_ip": "VirusTotal", "hibp": "Have I Been Pwned",
 }
 
 STATUS_LABEL = {
@@ -210,13 +222,122 @@ def _screenshot(db: Database, finding: dict, evidence_dir: Path | None) -> Path 
     return path if name and path.is_file() else None
 
 
+# Public pages a reader can open to see a source for themselves, by connector.
+# ``{arg}`` is the looked-up value, URL-quoted. Registries that only answer an
+# API or a POST form (ANAF, VIES) have none; their record is summarised instead.
+_SOURCE_PAGES = {
+    "crtsh": "https://crt.sh/?q={arg}",
+    "rdap": "https://lookup.icann.org/en/lookup?name={arg}",
+    "github_user": "https://github.com/{arg}",
+    "sanctions": "https://www.opensanctions.org/search/?q={arg}",
+    "gleif": "https://search.gleif.org/#/search/simpleSearch={arg}",
+    "companies_house": "https://find-and-update.company-information.service.gov.uk/company/{arg}",
+    "wayback": "https://web.archive.org/web/*/{arg}",
+    "virustotal_domain": "https://www.virustotal.com/gui/domain/{arg}",
+    "virustotal_ip": "https://www.virustotal.com/gui/ip-address/{arg}",
+    "urlscan": "https://urlscan.io/domain/{arg}",
+    "otx_domain": "https://otx.alienvault.com/indicator/domain/{arg}",
+    "otx_ip": "https://otx.alienvault.com/indicator/ip/{arg}",
+}
+_URL_ATTRS = ("listing_url", "profile_url", "url", "final_url")
+_HTTP = re.compile(r"^https?://[^\s\"'<>]+$")
+# Connectors whose finding is itself a page capture.
+CAPTURE_CONNECTORS = ("screenshot", "social_capture")
+
+
+def source_url(db: Database, finding: dict) -> str | None:
+    """A public page that shows what this finding recorded, if there is one."""
+    arg = str((finding.get("input") or {}).get("arg") or "").strip()
+    if _HTTP.match(arg):
+        return arg
+    # A single listing / profile page the source pointed at (legal hits, GLEIF...).
+    pages: set[str] = set()
+    for row in db.query("SELECT e.attributes FROM entity_sources es JOIN entities e "
+                        "ON e.id = es.entity_id WHERE es.finding_id = ?", (finding["id"],)):
+        attrs = row["attributes"]
+        for name in _URL_ATTRS:
+            for v in attrs.get(name) or []:
+                if finding["id"] in v.get("sources", []) and _HTTP.match(str(v["value"])):
+                    pages.add(str(v["value"]))
+        for v in attrs.get("lei") or []:
+            if finding["id"] in v.get("sources", []) and re.fullmatch(r"[A-Z0-9]{20}", str(v["value"])):
+                pages.add(f"https://search.gleif.org/#/record/{v['value']}")
+    if len(pages) == 1:
+        return pages.pop()
+    template = _SOURCE_PAGES.get(finding["connector"])
+    return template.format(arg=quote(arg, safe="")) if template and arg else None
+
+
+MAX_FACT_ENTITIES = 6
+MAX_FACT_ATTRS = 5
+
+
+def _facts(db: Database, finding: dict) -> tuple[list[tuple[str, str]], int]:
+    """What this source said: the entities it produced, with the attribute
+    values it supplied (provenance per value), minus plumbing and secrets."""
+    rows = db.query(
+        "SELECT e.type, e.key, e.attributes FROM entity_sources es JOIN entities e "
+        "ON e.id = es.entity_id WHERE es.finding_id = ? AND e.type != 'Document' "
+        "ORDER BY e.confidence DESC, e.key", (finding["id"],))
+    facts: list[tuple[str, str]] = []
+    for row in rows[:MAX_FACT_ENTITIES]:
+        own = []
+        for name, values in row["attributes"].items():
+            if name in _DRAFT_SKIP or name in _URL_ATTRS:
+                continue
+            for v in values:
+                val = v.get("value")
+                if (finding["id"] in v.get("sources", []) and isinstance(val, (str, int, float))
+                        and str(val).strip() and not _CREDENTIAL.search(f"{name}: {val}")):
+                    own.append(f"{name.replace('_', ' ')}: {str(val)[:160]}")
+                    break
+        key = "[redacted]" if _CREDENTIAL.search(row["key"]) else row["key"]
+        detail = "; ".join(own[:MAX_FACT_ATTRS])
+        facts.append((row["type"], key + (f" ({detail})" if detail else "")))
+    return facts, max(0, len(rows) - MAX_FACT_ENTITIES)
+
+
+def capturable(db: Database, body: dict) -> list[tuple[str, str]]:
+    """Cited findings that have a public page but no screenshot yet: ``(finding, url)``."""
+    done = body.get("captures") or {}
+    out = []
+    for fid in _evidence_numbers(body):
+        f = db.get("findings", fid)
+        if not f or f["error"] or f["connector"] in CAPTURE_CONNECTORS or fid in done:
+            continue
+        url = source_url(db, f)
+        if url:
+            out.append((fid, url))
+    return out
+
+
 def render(db: Database, investigation: dict, body: dict, audience: str = "internal",
            fmt: str = "md", cite: bool = True, evidence_dir: Path | None = None) -> str:
     """Render a report. With ``evidence_dir``, HTML embeds screenshot evidence
     inline (data URIs), so the exported file stands alone. DOCX and PDF are in
     ``app.report.export`` and use the same blocks."""
     blocks = build_blocks(db, investigation, body, audience, cite, evidence_dir)
-    return _to_html(blocks) if fmt == "html" else _to_md(blocks)
+    return to_html(blocks) if fmt == "html" else _to_md(blocks)
+
+
+def claim_text(item: dict) -> str:
+    """A claim as one line: severity (internal), status label and sensitive flag."""
+    text = item["text"]
+    if item.get("label"):
+        text += f" ({item['label']})"
+    if item.get("sensitive"):
+        text += " [sensitive]"
+    if item.get("severity"):
+        text = f"[{item['severity'].upper()}] " + text
+    return text
+
+
+AUDIENCE_NOTE = {
+    "internal": ("Internal working copy: finding ids, hashes, file paths and collection "
+                 "notes are included. Do not send this copy to the client."),
+    "client": ("Every statement below is referenced to the public source it rests on, "
+               "listed under Evidence with its retrieval date."),
+}
 
 
 def build_blocks(db: Database, investigation: dict, body: dict, audience: str = "internal",
@@ -224,37 +345,52 @@ def build_blocks(db: Database, investigation: dict, body: dict, audience: str = 
     """The audience-specific report as a list of ``(kind, value)`` blocks.
 
     Every output format serializes these, so what each audience sees is
-    decided in one place. Kinds: h1, meta, h2, p, claims, ul, evidence.
+    decided in one place. Kinds: h1, audience, meta, stats, h2, p, claims, ul,
+    evidence. Client blocks never carry ids, hashes, paths or collection notes.
     """
     if audience not in AUDIENCES:
         raise ValueError(f"audience must be one of {sorted(AUDIENCES)}")
     numbers = _evidence_numbers(body)
     evidence = _evidence_rows(db, numbers)
     internal = audience == "internal"
+    captures = body.get("captures") or {}
 
-    blocks: list[tuple[str, Any]] = [("h1", body.get("title") or investigation["name"])]
-    meta = {"Purpose": investigation["purpose"], "Prepared": now()[:10]}
+    blocks: list[tuple[str, Any]] = [("h1", body.get("title") or investigation["name"]),
+                                     ("audience", audience)]
+    targets = [t["value"] for t in db.query(
+        "SELECT value FROM targets WHERE investigation_id = ? ORDER BY created_at",
+        (investigation["id"],))]
+    meta = {"Subject": ", ".join(targets) or investigation["name"],
+            "Purpose": investigation["purpose"], "Prepared": now()[:10]}
     if internal:
-        meta.update({"Investigation": investigation["id"],
-                     "Mode": investigation["mode"]})
+        meta.update({"Investigation": investigation["id"], "Mode": investigation["mode"]})
     blocks.append(("meta", meta))
+
+    claims = [c for _s, c in _claims(body)]
+    verified = sum(1 for c in claims if c.get("status", "verified") == "verified")
+    blocks.append(("stats", {"Statements": len(claims), "Sources cited": len(evidence),
+                             "Verified": verified, "To confirm": len(claims) - verified}))
     if body.get("summary"):
         blocks += [("h2", "Summary"), ("p", body["summary"])]
 
+    cited_by: dict[str, list[str]] = {}
     for section in body.get("sections", []):
         blocks.append(("h2", section.get("title", "")))
         items = []
         for claim in section.get("claims", []):
-            text = claim.get("text", "")
-            label = STATUS_LABEL.get(claim.get("status", "verified"))
-            if label:
-                text += f" ({label})"
-            if internal and claim.get("sensitive"):
-                text += " [sensitive]"
-            if internal and claim.get("severity"):
-                text = f"[{claim['severity'].upper()}] " + text
+            status = claim.get("status", "verified")
+            for f in claim.get("evidence") or []:
+                cited_by.setdefault(f, []).append(claim.get("id") or "?")
             refs = [numbers[f] for f in claim.get("evidence") or [] if f in numbers]
-            items.append((text, refs if cite else []))
+            items.append({
+                "id": claim.get("id") if internal else None,
+                "text": claim.get("text", ""),
+                "status": status,
+                "label": STATUS_LABEL.get(status),
+                "severity": claim.get("severity") if internal else None,
+                "sensitive": internal and bool(claim.get("sensitive")),
+                "refs": refs if cite else [],
+            })
         blocks.append(("claims", items))
 
     if body.get("outstanding"):
@@ -262,18 +398,41 @@ def build_blocks(db: Database, investigation: dict, body: dict, audience: str = 
 
     if evidence:
         blocks.append(("h2", "Evidence"))
-        lines = []
+        items = []
         for f in evidence:
             source = SOURCE_NAMES.get(f["connector"], f["connector"])
-            arg = (f.get("input") or {}).get("arg", "")
-            verb = {"screenshot": "captured", "analyst_material": "supplied"}.get(
-                f["connector"], "retrieved")
-            line = f"[{f['n']}] {source}: {arg}, {verb} {f['fetched_at'][:10]}"
+            arg = str((f.get("input") or {}).get("arg", ""))
+            verb = {"screenshot": "captured", "social_capture": "captured",
+                    "analyst_material": "supplied"}.get(f["connector"], "retrieved")
+            date = f["fetched_at"][:10]
+            url = source_url(db, f)
+            image, shot_date = _screenshot(db, f, evidence_dir), date
+            if image is None and captures.get(f["id"]):
+                shot = db.get("findings", captures[f["id"]])
+                if shot and shot["investigation_id"] == investigation["id"]:
+                    image, shot_date = _screenshot(db, shot, evidence_dir), shot["fetched_at"][:10]
+            facts, more = _facts(db, f)
+            line = f"[{f['n']}] {source}: {arg}, {verb} {date}"
+            if url and url != arg:
+                line += f" <{url}>"
+            provenance = None
             if internal:
                 line += (f" — finding {f['id']}, sha256 {(f['sha256'] or '')[:16]}…, "
                          f"{f['raw_path']}")
-            lines.append((line, _screenshot(db, f, evidence_dir)))
-        blocks.append(("evidence", lines))
+                provenance = {"Finding": f["id"], "Connector": f["connector"],
+                              "Run by": f["run_by"], "SHA-256": f["sha256"] or "",
+                              "Payload": f["raw_path"] or "",
+                              "Cited by": ", ".join(cited_by.get(f["id"], []))}
+                if f.get("egress"):
+                    provenance["Egress"] = f["egress"]
+                if f.get("note"):
+                    provenance["Note"] = f["note"]
+            items.append({"n": f["n"], "source": source, "arg": arg, "verb": verb,
+                          "date": date, "url": url, "image": image,
+                          "shot_date": shot_date if image else None,
+                          "facts": facts, "more": more, "line": line,
+                          "provenance": provenance})
+        blocks.append(("evidence", items))
 
     if internal:
         blocks += [("h2", "Collection method (internal)"),
@@ -302,6 +461,8 @@ def _to_md(blocks: list[tuple[str, Any]]) -> str:
     for kind, val in blocks:
         if kind == "h1":
             out.append(f"# {val}\n")
+        elif kind == "audience":
+            out.append(f"> **{val.title()} copy.** {AUDIENCE_NOTE[val]}\n")
         elif kind == "h2":
             out.append(f"\n## {val}\n")
         elif kind == "meta":
@@ -309,51 +470,20 @@ def _to_md(blocks: list[tuple[str, Any]]) -> str:
         elif kind == "p":
             out.append(f"{val}\n")
         elif kind == "claims":
-            for text, refs in val:
-                cites = " " + "".join(f"[{n}]" for n in refs) if refs else ""
-                out.append(f"- {text}{cites}")
+            for item in val:
+                cites = " " + "".join(f"[{n}]" for n in item["refs"]) if item["refs"] else ""
+                prefix = f"`{item['id']}` " if item["id"] else ""
+                out.append(f"- {prefix}{claim_text(item)}{cites}")
         elif kind == "ul":
             out += [f"- {line}" for line in val]
         elif kind == "evidence":
-            out += [f"{line}  " for line, _img in val]
+            for item in val:
+                out.append(f"{item['line']}  ")
+                for etype, fact in item["facts"]:
+                    out.append(f"    - {etype}: {fact}")
+                if item["more"]:
+                    out.append(f"    - and {item['more']} more")
     return "\n".join(out).strip() + "\n"
-
-
-def _to_html(blocks: list[tuple[str, Any]]) -> str:
-    e = html.escape
-    body: list[str] = []
-    for kind, val in blocks:
-        if kind == "h1":
-            body.append(f"<h1>{e(val)}</h1>")
-        elif kind == "h2":
-            body.append(f"<h2>{e(val)}</h2>")
-        elif kind == "meta":
-            body.append("<dl>" + "".join(f"<dt>{e(k)}</dt><dd>{e(str(v))}</dd>"
-                                         for k, v in val.items()) + "</dl>")
-        elif kind == "p":
-            body.append(f"<p>{e(val)}</p>")
-        elif kind == "claims":
-            body.append("<ul>" + "".join(
-                f"<li>{e(t)}" + "".join(f' <a href="#ev{n}">[{n}]</a>' for n in refs) + "</li>"
-                for t, refs in val) + "</ul>")
-        elif kind == "ul":
-            body.append("<ul>" + "".join(f"<li>{e(x)}</li>" for x in val) + "</ul>")
-        elif kind == "evidence":
-            items = []
-            for i, (line, img) in enumerate(val, 1):
-                pic = ""
-                if img is not None:
-                    data = base64.b64encode(img.read_bytes()).decode("ascii")
-                    pic = f'<br><img alt="evidence {i}" src="data:image/png;base64,{data}">'
-                items.append(f'<li id="ev{i}">{e(line)}{pic}</li>')
-            body.append("<ol class=evidence>" + "".join(items) + "</ol>")
-    title = e(blocks[0][1]) if blocks else "Report"
-    return (f"<!doctype html><html><head><meta charset=utf-8><title>{title}</title>"
-            "<style>body{font:15px/1.5 system-ui,sans-serif;max-width:52rem;margin:2rem auto;"
-            "padding:0 1rem}dt{font-weight:600;float:left;clear:left;width:9rem}"
-            "dd{margin-left:9.5rem}.evidence{font-size:13px;color:#444}"
-            ".evidence img{max-width:100%;border:1px solid #ccc;margin:.4rem 0 1rem}</style></head>"
-            f"<body>{''.join(body)}</body></html>")
 
 
 # --- deterministic draft (no LLM) --------------------------------------------

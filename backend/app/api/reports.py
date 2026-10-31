@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 
 from .. import report as rep
+from ..evidence import capture
 from ..models import new_id, now
 from ..models.schemas import Audience, ReportCreate, ReportUpdate
 from ..platform import Platform
@@ -71,6 +72,54 @@ async def update_report(report_id: str, body: ReportUpdate, p: Platform = Depend
     p.db.audit(user=user, action="report.update", investigation_id=inv["id"],
                detail={"report_id": report_id})
     return {**p.db.get("reports", report_id), "lint": rep.lint(p.db, inv["id"], body.body)}
+
+
+# Page captures run a headless browser each: a couple at a time.
+CAPTURE_CONCURRENCY = 2
+
+
+@router.get("/reports/{report_id}/captures")
+async def list_captures(report_id: str, p: Platform = Depends(get_platform)):
+    """Cited sources with a public page and no screenshot yet."""
+    r, _inv = _load(p, report_id)
+    pending = rep.capturable(p.db, r["body"])
+    return {"pending": [{"finding": f, "url": u} for f, u in pending],
+            "captured": len(r["body"].get("captures") or {})}
+
+
+@router.post("/reports/{report_id}/captures")
+async def capture_sources(report_id: str, p: Platform = Depends(get_platform),
+                          user: str = Depends(current_user)):
+    """Screenshot the public page of every cited source that has one and none
+    yet, and attach each capture to its evidence entry in the report."""
+    r, inv = _load(p, report_id)
+    pending = rep.capturable(p.db, r["body"])
+    gate = asyncio.Semaphore(CAPTURE_CONCURRENCY)
+
+    async def one(fid: str, url: str) -> dict:
+        async with gate:
+            out = await capture(p.ledger, inv, url, user=user, run_by="analyst")
+        if out.error or out.refused:
+            # Playwright errors carry a multi-line call log: the first line says it.
+            reason = (out.error or "refused").strip().splitlines()[0][:200]
+            return {"finding": fid, "url": url, "error": reason}
+        if (out.result.raw or {}).get("blocked"):
+            return {"finding": fid, "url": url, "capture": out.finding_id,
+                    "error": "the site showed a bot wall; capture it by hand"}
+        return {"finding": fid, "url": url, "capture": out.finding_id}
+
+    results = await asyncio.gather(*(one(f, u) for f, u in pending))
+    done = {x["finding"]: x["capture"] for x in results if not x.get("error")}
+    # Re-read: the report may have been edited while the pages loaded.
+    body = p.db.get("reports", report_id)["body"]
+    if done:
+        body["captures"] = {**(body.get("captures") or {}), **done}
+        p.db.update("reports", report_id, {"body": body, "updated_at": now()})
+    p.db.audit(user=user, action="report.capture", investigation_id=inv["id"],
+               detail={"report_id": report_id, "captured": len(done),
+                       "failed": len(results) - len(done)})
+    return {"captured": [x for x in results if not x.get("error")],
+            "failed": [x for x in results if x.get("error")]}
 
 
 @router.get("/reports/{report_id}/lint")

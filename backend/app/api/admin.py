@@ -10,6 +10,7 @@ import connectors
 from connectors import _cli
 
 from .. import credits as credit_check
+from ..build import build_id
 from ..platform import Platform
 from ..retention import purge_expired
 from .deps import current_user, get_platform
@@ -19,7 +20,7 @@ router = APIRouter(tags=["admin"])
 
 @router.get("/health")
 async def health():
-    return {"ok": True}
+    return {"ok": True, "build": build_id()}
 
 
 # Connectors backed by a command-line tool (bundled in the image or via the Kali VM).

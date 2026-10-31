@@ -5,6 +5,7 @@ import type { NodeDisplayData, EdgeDisplayData, PartialButFor } from "sigma/type
 import type { Settings } from "sigma/settings";
 import FA2Layout from "graphology-layout-forceatlas2/worker";
 import { inferSettings } from "graphology-layout-forceatlas2";
+import { createEdgeCurveProgram } from "@sigma/edge-curve";
 import {
   Filter, Fullscreen, Layers, Minus, Pause, Play, Plus, Search, SlidersHorizontal, Workflow, X,
 } from "lucide-react";
@@ -32,9 +33,18 @@ interface EdgeAttrs {
   color: string;
   etype: string;
   count: number;
+  /** Bend of the edge (signed); see edgeCurvature(). */
+  curvature: number;
+  /** The edge's resting color, which the hover highlight brightens. */
+  tint: string;
 }
 
 type G = Graph<NodeAttrs, EdgeAttrs>;
+
+// The glow is a 2D-canvas pass per node: skip it on very large graphs.
+const GLOW_MAX_NODES = 2500;
+// Pulses are drawn for the hovered or selected node's first edges only.
+const PULSE_MAX_EDGES = 80;
 type Point = { x: number; y: number };
 
 // Survive tab switches: reopening the graph shows the same picture at once.
@@ -51,6 +61,7 @@ interface Palette {
   danger: string;
   edge: string;
   faded: string;
+  light: boolean;
 }
 
 function cssRgb(name: string, alpha = 1): string {
@@ -72,6 +83,7 @@ function readPalette(): Palette {
     // Blue-grey edges at low opacity: structure without noise.
     edge: light ? "rgba(84, 104, 120, 0.42)" : "rgba(144, 164, 174, 0.26)",
     faded: light ? "rgba(180, 190, 200, 0.55)" : "rgba(70, 84, 98, 0.55)",
+    light,
   };
 }
 
@@ -209,6 +221,9 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
       maxCameraRatio: 5,
       defaultDrawNodeLabel: makeDrawLabel(pal),
       defaultDrawNodeHover: makeDrawHover(pal),
+      // Bent edges: parallel and crossing links stay apart, and the web reads as connections.
+      defaultEdgeType: "curve",
+      edgeProgramClasses: { curve: createEdgeCurveProgram<NodeAttrs, EdgeAttrs>() },
       nodeReducer: (node, data) => {
         const res: Partial<NodeDisplayData> = { ...data };
         const hov = hoverRef.current;
@@ -236,9 +251,10 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
         if (!hov.node) return data;
         const ends = graph.extremities(edge);
         if (ends[0] === hov.node || ends[1] === hov.node) {
-          return { ...data, color: "#F59E0B", size: Math.max(data.size, 1.6), zIndex: 1 } as Partial<EdgeDisplayData>;
+          const lit = data.etype === "possible_match" ? pal.current.danger : graph.getNodeAttribute(hov.node, "color");
+          return { ...data, color: lit, size: Math.max(data.size * 1.6, 1.6), zIndex: 1 } as Partial<EdgeDisplayData>;
         }
-        return { ...data, hidden: true };
+        return { ...data, color: pal.current.light ? "rgba(84, 104, 120, 0.06)" : "rgba(144, 164, 174, 0.05)" };
       },
     });
     sigmaRef.current = renderer;
@@ -265,7 +281,11 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     // Marks WebGL can't draw cheaply: dashed rings on unverified matches,
     // target rings, group counts and the selection ring. There are few of these.
     renderer.createCanvasContext("marks", { style: { pointerEvents: "none" } });
-    renderer.resize(true); // size the new layer's pixel buffer
+    // Glow under the nodes and signal pulses along the hovered or selected node's
+    // edges, between the edge and node layers: the graph reads like a network firing.
+    const glowCanvas = renderer.createCanvas("glow", { beforeLayer: "nodes", style: { pointerEvents: "none" } });
+    const pulseCanvas = renderer.createCanvas("pulses", { beforeLayer: "nodes", style: { pointerEvents: "none" } });
+    renderer.resize(true); // size the new layers (CSS box; marks also its pixel buffer)
     const marks = renderer.getCanvases().marks.getContext("2d")!;
     renderer.on("afterRender", () => {
       const { width, height } = renderer.getDimensions();
@@ -324,11 +344,109 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
       marks.globalAlpha = 1;
     });
 
+    const glow = glowCanvas.getContext("2d")!;
+    const pulses = pulseCanvas.getContext("2d")!;
+    const fit = (c: HTMLCanvasElement, ctx: CanvasRenderingContext2D) => {
+      const { width, height } = renderer.getDimensions();
+      const dpr = window.devicePixelRatio || 1;
+      if (c.width !== Math.round(width * dpr) || c.height !== Math.round(height * dpr)) {
+        c.width = Math.round(width * dpr);
+        c.height = Math.round(height * dpr);
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      return { width, height };
+    };
+    renderer.on("afterRender", () => {
+      const { width, height } = fit(glowCanvas, glow);
+      if (graph.order > GLOW_MAX_NODES) return;
+      const p = pal.current;
+      const hov = hoverRef.current;
+      glow.globalCompositeOperation = p.light ? "source-over" : "lighter";
+      graph.forEachNode((id, a) => {
+        const d = renderer.getNodeDisplayData(id);
+        if (!d || d.hidden || a.status === "rejected") return;
+        const v = renderer.framedGraphToViewport(d);
+        const r = renderer.scaleSize(d.size) * (a.seed ? 4.2 : 3.2) + 4;
+        if (v.x < -r || v.y < -r || v.x > width + r || v.y > height + r) return;
+        const dim = hov.node && id !== hov.node && !hov.neighbors.has(id);
+        const strength = (p.light ? 0.22 : 0.34) * (dim ? 0.2 : 1) * (id === hov.node ? 1.6 : 1);
+        const base = a.color.startsWith("#") ? a.color : typeColor(a.etype);
+        const g = glow.createRadialGradient(v.x, v.y, 0, v.x, v.y, r);
+        g.addColorStop(0, withAlpha(base, Math.min(1, strength)));
+        g.addColorStop(0.45, withAlpha(base, strength * 0.35));
+        g.addColorStop(1, withAlpha(base, 0));
+        glow.fillStyle = g;
+        glow.fillRect(v.x - r, v.y - r, r * 2, r * 2);
+      });
+      glow.globalCompositeOperation = "source-over";
+    });
+
+    let frame = 0;
+    const firing = () => hoverRef.current.node ?? (selectedRef.current && graph.hasNode(selectedRef.current) ? selectedRef.current : null);
+    const drawPulses = (t: number) => {
+      fit(pulseCanvas, pulses);
+      const hub = firing();
+      if (!hub || reduceMotion.matches) {
+        frame = 0;
+        return;
+      }
+      const hd = renderer.getNodeDisplayData(hub);
+      if (hd && !hd.hidden) {
+        const h = renderer.framedGraphToViewport(hd);
+        const color = graph.getNodeAttribute(hub, "color");
+        let n = 0;
+        graph.forEachEdge(hub, (edge, a, source, target) => {
+          if (n++ > PULSE_MAX_EDGES) return;
+          const other = source === hub ? target : source;
+          const od = renderer.getNodeDisplayData(other);
+          if (!od || od.hidden) return;
+          const o = renderer.framedGraphToViewport(od);
+          // Same geometry as the curve program: control point on the normal
+          // of the source->target chord, scaled by the edge's curvature.
+          const s = source === hub ? h : o;
+          const e = source === hub ? o : h;
+          const dx = e.x - s.x;
+          const dy = e.y - s.y;
+          const c = { x: (s.x + e.x) / 2 + dy * a.curvature, y: (s.y + e.y) / 2 - dx * a.curvature };
+          const len = Math.hypot(dx, dy) || 1;
+          const speed = 0.00035 * Math.max(0.6, Math.min(1.8, 260 / len));
+          let k = ((t * speed + hash01(edge)) % 1);
+          if (source !== hub) k = 1 - k; // signals leave the firing node
+          const q = 1 - k;
+          const x = q * q * s.x + 2 * q * k * c.x + k * k * e.x;
+          const y = q * q * s.y + 2 * q * k * c.y + k * k * e.y;
+          const tint = a.etype === "possible_match" ? pal.current.danger : color;
+          const g = pulses.createRadialGradient(x, y, 0, x, y, 9);
+          g.addColorStop(0, tint.startsWith("#") ? withAlpha(tint, 0.95) : tint);
+          g.addColorStop(1, tint.startsWith("#") ? withAlpha(tint, 0) : "rgba(0,0,0,0)");
+          pulses.fillStyle = g;
+          pulses.beginPath();
+          pulses.arc(x, y, 9, 0, Math.PI * 2);
+          pulses.fill();
+          pulses.fillStyle = pal.current.light ? "#ffffff" : "rgba(255,255,255,0.9)";
+          pulses.beginPath();
+          pulses.arc(x, y, 2, 0, Math.PI * 2);
+          pulses.fill();
+        });
+      }
+      frame = window.requestAnimationFrame(drawPulses);
+    };
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const kickPulses = () => {
+      if (!frame && firing()) frame = window.requestAnimationFrame(drawPulses);
+      else if (!firing()) fit(pulseCanvas, pulses);
+    };
+    renderer.on("afterRender", kickPulses);
+
     // Follow the theme.
     const onTheme = () => {
       palette.current = readPalette();
       renderer.setSetting("labelColor", { color: palette.current.ink });
-      graph.updateEachEdgeAttributes((_, a) => ({ ...a, color: edgeColor(a.etype, palette.current) }));
+      graph.updateEachEdgeAttributes((_, a, source) => {
+        const tint = edgeColor(a.etype, palette.current, graph.getNodeAttribute(source, "etype"));
+        return { ...a, color: tint, tint };
+      });
       renderer.refresh();
     };
     const mo = new MutationObserver(onTheme);
@@ -337,6 +455,7 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     mq.addEventListener("change", onTheme);
 
     return () => {
+      if (frame) window.cancelAnimationFrame(frame);
       mo.disconnect();
       mq.removeEventListener("change", onTheme);
       savePositions();
@@ -543,11 +662,14 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     }
 
     for (const [id, e] of view.edges) {
+      const tint = edgeColor(e.etype, pal, view.nodes.get(e.source)?.etype);
       const attrs: EdgeAttrs = {
-        size: e.count > 1 ? Math.min(4, 0.8 + Math.log2(e.count) * 0.5) : e.etype === "possible_match" ? 1.5 : 0.7,
-        color: edgeColor(e.etype, pal),
+        size: e.count > 1 ? Math.min(4, 0.9 + Math.log2(e.count) * 0.5) : e.etype === "possible_match" ? 1.5 : 0.85,
+        color: tint,
+        tint,
         etype: e.etype,
         count: e.count,
+        curvature: edgeCurvature(id),
       };
       if (g.hasEdge(id)) g.mergeEdgeAttributes(id, attrs);
       else if (g.hasNode(e.source) && g.hasNode(e.target)) {
@@ -821,8 +943,24 @@ function nodeAttrs(n: ViewNode): Omit<NodeAttrs, "x" | "y"> {
   };
 }
 
-function edgeColor(etype: string, pal: Palette): string {
-  return etype === "possible_match" ? pal.danger : pal.edge;
+/** Edges carry their source's type color, faint, like synapses out of a cell. */
+function edgeColor(etype: string, pal: Palette, sourceType?: string): string {
+  if (etype === "possible_match") return pal.danger;
+  if (!sourceType) return pal.edge;
+  return withAlpha(typeColor(sourceType), pal.light ? 0.42 : 0.34);
+}
+
+/** A stable 0..1 value per id, so bends and pulse phases don't jump on re-render. */
+function hash01(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  return ((h >>> 0) % 10007) / 10007;
+}
+
+/** Signed bend between 0.12 and 0.3: neighbouring edges curve apart instead of stacking. */
+function edgeCurvature(id: string): number {
+  const u = hash01(id);
+  return (u < 0.5 ? -1 : 1) * (0.12 + Math.abs(u - 0.5) * 0.36);
 }
 
 function withAlphaRgb(rgb: string, a: number): string {

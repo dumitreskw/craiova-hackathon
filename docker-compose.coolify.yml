@@ -29,7 +29,11 @@ services:
       - app
 
   app:
-    build: .
+    build:
+      context: .
+      # Build id: SOURCE_COMMIT if set (Coolify can), else the Dockerfile reads .git.
+      args:
+        SOURCE_COMMIT: ${SOURCE_COMMIT:-}
     restart: unless-stopped
     expose:
       - "8000"

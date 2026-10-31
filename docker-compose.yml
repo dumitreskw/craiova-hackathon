@@ -28,7 +28,11 @@ services:
         condition: service_healthy
 
   app:
-    build: .
+    build:
+      context: .
+      # Build id: SOURCE_COMMIT if set (Coolify can), else the Dockerfile reads .git.
+      args:
+        SOURCE_COMMIT: ${SOURCE_COMMIT:-}
     image: osint-platform:latest
     restart: unless-stopped
     expose:

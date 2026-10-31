@@ -137,3 +137,65 @@ async def test_api_docx_respects_lint_gate(client, platform, make_investigation,
                              json={"body": bad})).json()["id"]
     r = await client.get(f"/reports/{rid}/render", params={"format": "docx"})
     assert r.status_code == 409
+
+
+# --- HTML page, source links, page captures, build id ------------------------------
+
+
+async def test_html_audiences_differ_visibly(platform, make_investigation, settings):
+    from app import report as rep
+    inv, body = await _report(platform, make_investigation, settings)
+    internal = rep.render(platform.db, inv, body, "internal", "html", True, settings.evidence_dir)
+    client = rep.render(platform.db, inv, body, "client", "html", True, settings.evidence_dir)
+    assert "Internal working copy" in internal and "Client copy" in client
+    for leak in ("sha256", "SHA-256", "Collection method", inv["id"], "f_", "claim-c1",
+                 "Low severity"):
+        assert leak not in client
+    assert 'id="claim-c1"' in internal and "Cited by" in internal and "Low severity" in internal
+    # Every citation points at an evidence entry that exists.
+    for page in (internal, client):
+        assert 'href="#ev1"' in page and 'id="ev1"' in page and 'id="ev2"' in page
+        assert "data:image/png;base64," in page and "What the source returned" in page
+
+
+async def test_source_url_and_capturable(platform, make_investigation, settings):
+    from app import report as rep
+    inv, body = await _report(platform, make_investigation, settings)
+    await platform.ledger.run(inv, "crtsh", "example.com", user="t", run_by="t")
+    crt = platform.db.one("SELECT * FROM findings WHERE connector = 'crtsh'")
+    dns = platform.db.one("SELECT * FROM findings WHERE connector = 'dns'")
+    assert rep.source_url(platform.db, crt) == "https://crt.sh/?q=example.com"
+    assert rep.source_url(platform.db, dns) is None          # DNS has no page to show
+    body["sections"][0]["claims"].append(
+        {"id": "c3", "text": "Certificates list two subdomains.", "evidence": [crt["id"]]})
+    # The screenshot finding is itself a capture; DNS has no page; crt.sh does.
+    assert rep.capturable(platform.db, body) == [(crt["id"], "https://crt.sh/?q=example.com")]
+
+
+async def test_api_capture_sources_attaches_screenshots(client, platform, make_investigation,
+                                                        settings):
+    inv, body = await _report(platform, make_investigation, settings)
+    await platform.ledger.run(inv, "crtsh", "example.com", user="t", run_by="t")
+    crt = platform.db.one("SELECT id FROM findings WHERE connector = 'crtsh'")["id"]
+    body["sections"][0]["claims"].append(
+        {"id": "c3", "text": "Certificates list two subdomains.", "evidence": [crt]})
+    rid = (await client.post(f"/investigations/{inv['id']}/reports",
+                             json={"body": body})).json()["id"]
+    pending = (await client.get(f"/reports/{rid}/captures")).json()["pending"]
+    assert [x["finding"] for x in pending] == [crt]
+    r = (await client.post(f"/reports/{rid}/captures")).json()
+    assert [x["finding"] for x in r["captured"]] == [crt] and not r["failed"]
+    stored = (await client.get(f"/reports/{rid}")).json()["body"]
+    assert stored["captures"][crt] == r["captured"][0]["capture"]
+    assert (await client.get(f"/reports/{rid}/captures")).json()["pending"] == []
+    page = (await client.get(f"/reports/{rid}/render",
+                             params={"format": "html", "audience": "client"})).text
+    assert page.count("data:image/png;base64,") == 2          # news story + crt.sh page
+
+
+async def test_health_reports_build_id(client, monkeypatch):
+    from app import build
+    build.build_id.cache_clear()
+    monkeypatch.setenv("OSINT_BUILD", "0123456789abcdef")
+    assert (await client.get("/health")).json() == {"ok": True, "build": "01234567"}
+    build.build_id.cache_clear()

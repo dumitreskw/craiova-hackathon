@@ -135,8 +135,11 @@ body {
 /* The graph's light table: a faint survey grid under the WebGL canvas. */
 .graph-surface {
   background-color: rgb(var(--canvas));
-  background-image: radial-gradient(rgb(var(--line) / 0.55) 1px, transparent 1px);
-  background-size: 24px 24px;
+  /* A faint light in the middle and a fine dot field: depth behind the glow. */
+  background-image:
+    radial-gradient(ellipse 70% 60% at 50% 45%, rgb(var(--accent) / 0.06), transparent 70%),
+    radial-gradient(rgb(var(--line) / 0.4) 1px, transparent 1px);
+  background-size: 100% 100%, 22px 22px;
 }
 
 @media (prefers-reduced-motion: reduce) {
