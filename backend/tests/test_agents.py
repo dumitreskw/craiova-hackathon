@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from app import review
 from app.agent.model import echo_content
 from app.evidence import capture
 from app.main import create_app
@@ -99,16 +100,16 @@ async def test_collection_agent_runs_tools_through_the_ledger(agent_platform):
     assert r["status"] == "finished" and "203.0.113.10" in r["summary"]
     f = p.db.one("SELECT * FROM findings WHERE connector = 'dns'")
     assert f["input"]["arg"] == "example.com" and f["run_by"] == r["id"]
-    # Screening a non-target is refused by the agent toolbox, not run.
+    # Screening is not limited to targets: an associate's name is screened too.
     results = {b["tool_use_id"]: b for b in model.requests[1]["last"]["content"]}
-    assert results["t2"]["is_error"] and "targets" in results["t2"]["content"]
-    assert not p.db.query("SELECT * FROM findings WHERE connector = 'interpol'")
+    assert not results["t2"].get("is_error")
+    assert p.db.query("SELECT * FROM findings WHERE connector = 'interpol'")
     # Passive investigation: the active connector and screenshot are not offered.
     offered = model.requests[0]["tools"]
     assert "dns" in offered and "http_probe" not in offered and "screenshot" not in offered
     assert offered == sorted(offered[:-2]) + ["get_entity", "graph_overview"]
     assert model.requests[0]["effort"] == "medium"
-    assert r["stats"]["tool_calls"] == 1 and r["stats"]["cache_read_input_tokens"] == 160
+    assert r["stats"]["tool_calls"] == 2 and r["stats"]["cache_read_input_tokens"] == 160
     assert [t["t"] for t in r["transcript"]] == ["text", "tool", "tool", "result", "result", "text"]
     actions = {a["action"] for a in p.db.query("SELECT action FROM audit")}
     assert {"agent.collection.start", "agent.collection.finish", "connector.call"} <= actions
@@ -160,6 +161,22 @@ async def test_refusal_stops_without_running_tools(agent_platform):
     r = await run(p, inv, "collection")
     assert r["status"] == "refused" and "cyber" in r["summary"]
     assert not p.db.query("SELECT * FROM findings")
+
+
+async def test_lookups_skip_entities_verified_as_not_the_subject(agent_platform):
+    p = agent_platform
+    inv = make_inv(p)
+    add_target(p, inv, "Jane Doe", EntityType.PERSON, "jane doe")
+    other = p.resolver.ensure_entity(inv["id"], EntityType.PERSON, "jane m doe")
+    review.record(p.db, p.resolver, p.bus, other, "rejected", "A namesake in Ohio.",
+                  reviewer="claude", user="t", by_agent=True)
+    model = p.script(msg(tool("a", "interpol", {"value": "Jane M Doe"}),
+                         tool("b", "interpol", {"value": "John Roe"}), stop="tool_use"),
+                     msg(text("done")))
+    await run(p, inv, "collection")
+    results = {b["tool_use_id"]: b for b in model.requests[1]["last"]["content"]}
+    assert results["a"]["is_error"] and "namesake in Ohio" in results["a"]["content"]
+    assert not results["b"].get("is_error")
 
 
 async def test_truncated_tool_call_is_not_executed(agent_platform):

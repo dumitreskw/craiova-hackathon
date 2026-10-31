@@ -96,8 +96,9 @@ official listing. This is to avoid falsely branding an innocent namesake.
 Brought over from the Kali field setup (same tools, same API keys), plus the
 search and page-reading stack. Cost: **free**, **metered** (monthly quota, the
 ledger refuses calls past it), **paid** (credits per call). *Seed-only*
-connectors run on the investigation's own targets only, never on entities a
-scan stumbles on.
+connectors are not pivoted on automatically by the quick scan (seeds only);
+Claude agents may run them on anything tied to the subject, targets or not,
+except entities verification rejected as not the subject.
 
 | Connector | Source | Input → Output | Cost | Notes |
 |---|---|---|---|---|

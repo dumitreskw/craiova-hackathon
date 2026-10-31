@@ -20,8 +20,10 @@ refusal is final: note it and move on.
 - Stay on the target. DNS, mail, CDN and hosting providers that show up in \
 results are third parties: note them, don't investigate them.
 - Name-only hits on sanctions or wanted lists are unverified possible matches, \
-never findings about the subject. Screening tools only run on the \
-investigation's own targets.
+never findings about the subject. Look-alike domains, email discovery, \
+breach and account checks run on whatever you have tied to the subject (its \
+domains, addresses, usernames), targets or not; skip third parties and \
+anything verified as not the subject.
 - Breach data means which breach and which data classes, never passwords or \
 hashes.
 - Personal data stays proportionate to the purpose. Special-category data \
@@ -191,7 +193,9 @@ calls in one turn, so they run in parallel. Give each a specific goal and a \
 lookup budget; the budgets share the total stated in the first message.
 - Pick only workstreams that serve the purpose: company_registry when a \
 company is involved, legal_screening only for person or organisation targets, \
-breach_exposure only when the targets include email addresses.
+breach_exposure when the targets or the findings so far include the subject's \
+email addresses (for a person, their work address at their company's domain \
+counts).
 - If the brief lists analyst-supplied material, plan from it before you \
 dispatch. The brief gives each item's size, headings and identifiers; read \
 what the plan needs with read_material (in chunks; skip what is off-purpose). \

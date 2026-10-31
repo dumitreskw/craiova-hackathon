@@ -327,9 +327,11 @@ def connector_tools(investigation: dict, costly: str = "all") -> list[dict]:
         mode = "Passive." if spec.passive else (
             "ACTIVE: contacts the target.")
         if name in LEGAL:
-            mode += " Screening: only for the investigation's own targets; hits are unverified."
+            mode += (" Screening: for the subject and the people and companies around it "
+                     "that serve the purpose; name-only hits are unverified.")
         elif spec.seed_only:
-            mode += " Only for the investigation's own targets."
+            mode += (" For the subject's own domains, addresses and usernames (targets or "
+                     "ones you found), not third parties.")
         if spec.cost == "metered":
             mode += f" Uses a small monthly quota ({spec.quota}): once per target at most."
         elif spec.cost == "paid":
@@ -477,12 +479,13 @@ class ToolBox:
                     key = arg = canonical_key(spec.accepts, value)
                 except (DetectError, ValueError, UnicodeError) as e:
                     raise ToolError(f"'{value}' is not a valid {spec.accepts.value}: {e}") from e
-            if (name in LEGAL or spec.seed_only) and key not in self._target_keys(spec.accepts):
-                what = "Screening" if name in LEGAL else f"'{name}'"
-                raise ToolError(
-                    f"{what} is limited to this investigation's own targets; '{value}' is not "
-                    "one. If it serves the purpose, the analyst can add it as a target.")
             entity_id = self._find_entity(spec.accepts.value, key)
+            if entity_id and key not in self._target_keys(spec.accepts):
+                verdict = review.latest(self.db, entity_id)
+                if verdict and verdict["verdict"] == "rejected":
+                    raise ToolError(
+                        f"'{value}' was verified as not the subject's ({verdict['reason']}); "
+                        "don't spend lookups on it.")
             for extra in EXTRA_PARAMS.get(name, {}):
                 if extra in args:
                     kwargs[extra] = args[extra]
