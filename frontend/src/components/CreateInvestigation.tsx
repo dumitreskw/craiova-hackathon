@@ -1,21 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
-import type { Investigation, LegalBasis, Mode } from "../types";
+import type { Investigation, Mode } from "../types";
 import { ErrorBox } from "./ui";
-
-const BASES: { value: LegalBasis; label: string; hint: string }[] = [
-  { value: "legitimate_interest", label: "Legitimate interest", hint: "Security assessment, vendor or partner vetting." },
-  { value: "contract", label: "Contract", hint: "A signed engagement, such as a pentest or due-diligence order." },
-  { value: "legal_obligation", label: "Legal obligation", hint: "KYC / AML or another duty set by law." },
-  { value: "consent", label: "Consent", hint: "The person investigated agreed to it." },
-  { value: "public_task", label: "Public task", hint: "Work carried out in the public interest or by a public authority." },
-  { value: "vital_interests", label: "Vital interests", hint: "Protecting someone's life." },
-];
 
 export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigation) => void }) {
   const [name, setName] = useState("");
   const [purpose, setPurpose] = useState("");
-  const [basis, setBasis] = useState<LegalBasis>("legitimate_interest");
   const [mode, setMode] = useState<Mode>("passive");
   const [maxDepth, setMaxDepth] = useState(1);
   const [costly, setCostly] = useState<"none" | "metered" | "all">("all");
@@ -32,7 +22,6 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
       const inv = await api.post<Investigation>("/investigations", {
         name: name.trim(),
         purpose: purpose.trim(),
-        legal_basis: basis,
         mode,
         settings: { max_depth: maxDepth, connectors: ["*"], exclude_connectors: [],
                     costly_connectors: costly },
@@ -51,7 +40,7 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
         <div>
           <h1 className="text-[28px] font-semibold leading-tight tracking-tight">New investigation</h1>
           <p className="mt-2 max-w-prose text-[15px] text-muted">
-            The purpose and legal basis are stored with the investigation and appear in the audit log. Write them
+            The purpose is stored with the investigation and appears in the audit log. Write it
             for someone reviewing this work later.
           </p>
         </div>
@@ -69,24 +58,6 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
             placeholder="Why this investigation exists and what question it should answer." />
           {purpose && purposeShort && <p className="mt-1 text-xs text-warn">At least 10 characters.</p>}
         </div>
-
-        <fieldset>
-          <legend className="label">Legal basis (GDPR Art. 6)</legend>
-          <div className="grid gap-1.5 sm:grid-cols-2">
-            {BASES.map((b) => (
-              <label key={b.value}
-                className={`flex cursor-pointer gap-2 rounded-md border px-3 py-2 ${
-                  basis === b.value ? "border-accent bg-accent/10" : "border-line hover:border-muted/70"}`}>
-                <input type="radio" name="basis" className="mt-1 accent-[rgb(var(--accent))]"
-                  checked={basis === b.value} onChange={() => setBasis(b.value)} />
-                <span>
-                  <span className="block text-sm font-medium">{b.label}</span>
-                  <span className="block text-xs text-muted">{b.hint}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
 
         <fieldset>
           <legend className="label">Collection mode</legend>

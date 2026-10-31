@@ -6,9 +6,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-# GDPR Art. 6(1) lawful bases.
-LegalBasis = Literal["consent", "contract", "legal_obligation", "vital_interests",
-                     "public_task", "legitimate_interest"]
 Mode = Literal["passive", "active"]
 Audience = Literal["internal", "client"]
 
@@ -26,7 +23,6 @@ class InvestigationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     purpose: str = Field(min_length=10, max_length=2000,
                          description="Why this investigation exists; recorded and audited.")
-    legal_basis: LegalBasis
     mode: Mode = "passive"
     settings: InvestigationSettings = InvestigationSettings()
     retention_days: int | None = Field(None, ge=1, le=3650)
@@ -35,7 +31,6 @@ class InvestigationCreate(BaseModel):
 class InvestigationUpdate(BaseModel):
     name: str | None = None
     purpose: str | None = Field(None, min_length=10, max_length=2000)
-    legal_basis: LegalBasis | None = None
     mode: Mode | None = None
     settings: InvestigationSettings | None = None
     retention_days: int | None = Field(None, ge=1, le=3650)

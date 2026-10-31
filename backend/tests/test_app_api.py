@@ -87,7 +87,7 @@ async def test_render_audiences(platform, make_investigation):
     internal = rep.render(platform.db, inv, body, audience="internal")
     client = rep.render(platform.db, inv, body, audience="client")
     assert "sha256" in internal and "Collection method" in internal and inv["id"] in internal
-    for leak in ("sha256", "Collection method", inv["id"], "evidence/", "Legal basis"):
+    for leak in ("sha256", "Collection method", inv["id"], "evidence/"):
         assert leak not in client
     assert "[1]" in client and "## Evidence" in client
     uncited = rep.render(platform.db, inv, body, audience="client", cite=False)
@@ -113,14 +113,11 @@ async def _wait(platform):
         await asyncio.gather(*platform.scan.tasks.values(), return_exceptions=True)
 
 
-NEW_INV = {"name": "Example SRL", "purpose": "Vendor due diligence before contract",
-           "legal_basis": "legitimate_interest"}
+NEW_INV = {"name": "Example SRL", "purpose": "Vendor due diligence before contract"}
 
 
 async def test_api_requires_purpose(client):
     r = await client.post("/investigations", json={**NEW_INV, "purpose": "x"})
-    assert r.status_code == 422
-    r = await client.post("/investigations", json={**NEW_INV, "legal_basis": "because"})
     assert r.status_code == 422
 
 

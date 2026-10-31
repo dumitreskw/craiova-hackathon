@@ -62,7 +62,7 @@ def agent_platform(settings, fake_registry):
 
 def make_inv(p, **over):
     inv = {"id": new_id("inv"), "name": "Example SRL", "purpose": "Authorized vendor review",
-           "legal_basis": "legitimate_interest", "mode": "passive",
+           "mode": "passive",
            "settings": {"max_depth": 1}, "retention_days": 90,
            "legal_hold": 0, "created_by": "t", "created_at": now(), **over}
     p.db.insert("investigations", inv)
@@ -282,8 +282,7 @@ async def client(agent_platform):
 async def test_api_collect_and_report_agent(client, agent_platform):
     p = agent_platform
     inv = (await client.post("/investigations", json={
-        "name": "Example", "purpose": "Authorized footprint review",
-        "legal_basis": "legitimate_interest"})).json()
+        "name": "Example", "purpose": "Authorized footprint review"})).json()
     assert (await client.post(f"/investigations/{inv['id']}/report-agent",
                               json={"goal": "Summarize"})).status_code == 422
     p.script(msg(tool("a", "dns", {"value": "example.com"}), stop="tool_use"), msg(text("done")))
@@ -299,8 +298,7 @@ async def test_api_collect_and_report_agent(client, agent_platform):
 
 async def test_api_capture_and_screenshot_download(client, agent_platform):
     inv = (await client.post("/investigations", json={
-        "name": "Example", "purpose": "Authorized footprint review",
-        "legal_basis": "legitimate_interest"})).json()
+        "name": "Example", "purpose": "Authorized footprint review"})).json()
     r = await client.post(f"/investigations/{inv['id']}/capture",
                           json={"url": "https://news.example/story"})
     assert r.status_code == 200
@@ -318,8 +316,7 @@ async def test_api_agents_need_credentials(settings, fake_registry, monkeypatch)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                  base_url="http://test/api/v1") as c:
         inv = (await c.post("/investigations", json={
-            "name": "E", "purpose": "Authorized footprint review",
-            "legal_basis": "legitimate_interest"})).json()
+            "name": "E", "purpose": "Authorized footprint review"})).json()
         r = await c.post(f"/investigations/{inv['id']}/collect",
                          json={"goal": "Map it", "target": "example.com"})
         assert r.status_code == 503 and "ANTHROPIC_API_KEY" in r.text

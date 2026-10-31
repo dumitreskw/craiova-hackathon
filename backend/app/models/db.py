@@ -22,7 +22,6 @@ CREATE TABLE IF NOT EXISTS investigations (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     purpose         TEXT NOT NULL,
-    legal_basis     TEXT NOT NULL,
     mode            TEXT NOT NULL DEFAULT 'passive',      -- passive | active
     settings        TEXT NOT NULL DEFAULT '{}',
     retention_days  INTEGER NOT NULL,

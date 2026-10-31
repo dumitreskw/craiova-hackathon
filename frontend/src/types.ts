@@ -1,13 +1,5 @@
 // Shapes returned by the backend (backend/app/api, docs/05-api.md).
 
-export type LegalBasis =
-  | "consent"
-  | "contract"
-  | "legal_obligation"
-  | "vital_interests"
-  | "public_task"
-  | "legitimate_interest";
-
 export type Mode = "passive" | "active";
 
 export interface InvestigationSettings {
@@ -29,7 +21,6 @@ export interface Investigation {
   id: string;
   name: string;
   purpose: string;
-  legal_basis: LegalBasis;
   mode: Mode;
   settings: InvestigationSettings;
   retention_days: number;

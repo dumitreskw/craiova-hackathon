@@ -232,7 +232,6 @@ class AgentRunner:
         lines = [
             f"Investigation: {inv['name']}",
             f"Purpose: {inv['purpose']}",
-            f"Legal basis: {inv['legal_basis']}",
             f"Mode: {inv['mode']}" + (" (active)" if inv["mode"] == "active" else " (passive only)"),
             "Targets: " + (", ".join(f"{t['value']} ({t['type']})" for t in targets) or "none"),
         ]

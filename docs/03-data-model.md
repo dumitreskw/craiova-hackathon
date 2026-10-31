@@ -102,7 +102,7 @@ confidence = 1 - Π (1 - reliability(source_i) * match_quality_i)
 
 ## Investigation-level objects
 
-- `Investigation { id, name, owner, purpose, legal_basis, created_at, settings }`
+- `Investigation { id, name, owner, purpose, created_at, settings }`
 - `Target { id, investigation_id, entity_ref, type, added_by }`
 - `Job { id, connector, entity_ref, depth, status, started_at, finished_at, error }`
 - `Note { id, entity_ref, author, body, created_at }`

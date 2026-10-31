@@ -73,7 +73,7 @@ async def test_docx_client_omits_internal_detail(platform, make_investigation, s
     inv, body = await _report(platform, make_investigation, settings)
     blocks = build_blocks(platform.db, inv, body, "client", True, settings.evidence_dir)
     _doc, text = _docx_text(to_docx(blocks))
-    for leak in ("sha256", "Collection method", inv["id"], "Legal basis", "[LOW]"):
+    for leak in ("sha256", "Collection method", inv["id"], "[LOW]"):
         assert leak not in text
     assert "(unverified)" in text and "Evidence" in text
 

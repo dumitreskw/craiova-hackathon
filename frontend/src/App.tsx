@@ -179,7 +179,7 @@ function Home({ list }: { list: Investigation[] | null }) {
             <FolderSearch className="mt-0.5 h-6 w-6 text-muted" aria-hidden />
             <div>
               <p className="font-medium">No investigations yet</p>
-              <p className="mt-1 text-sm text-muted">Start one with a purpose and a legal basis; targets come next.</p>
+              <p className="mt-1 text-sm text-muted">Start one with a purpose; targets come next.</p>
             </div>
           </div>
         )}

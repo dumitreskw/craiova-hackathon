@@ -236,7 +236,6 @@ def build_blocks(db: Database, investigation: dict, body: dict, audience: str = 
     meta = {"Purpose": investigation["purpose"], "Prepared": now()[:10]}
     if internal:
         meta.update({"Investigation": investigation["id"],
-                     "Legal basis": investigation["legal_basis"],
                      "Mode": investigation["mode"]})
     blocks.append(("meta", meta))
     if body.get("summary"):

@@ -72,7 +72,7 @@ Try it:
 
 ```bash
 B=http://127.0.0.1:8000/api/v1
-INV=$(curl -s -X POST $B/investigations -H 'content-type: application/json'   -d '{"name":"Demo","purpose":"Authorized external footprint review","legal_basis":"legitimate_interest"}'   | jq -r .id)
+INV=$(curl -s -X POST $B/investigations -H 'content-type: application/json'   -d '{"name":"Demo","purpose":"Authorized external footprint review"}'   | jq -r .id)
 curl -s -X POST $B/investigations/$INV/targets -H 'content-type: application/json' -d '{"value":"example.com"}'
 curl -N $B/investigations/$INV/stream                     # live events (Ctrl-C to stop)
 curl -s "$B/investigations/$INV/graph?min_confidence=0.5" | jq '.nodes | length'

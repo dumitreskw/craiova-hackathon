@@ -18,7 +18,6 @@ DELETE /investigations/{id}            delete (soft) + purge evidence job
 {
   "name": "Example SRL due diligence",
   "purpose": "Vendor vetting before contract",
-  "legal_basis": "legitimate_interest",  // GDPR Art. 6 basis
   "mode": "passive",                // passive | active
   "retention_days": 90,
   "settings": {

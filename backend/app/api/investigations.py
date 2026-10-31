@@ -40,15 +40,14 @@ async def create_investigation(body: InvestigationCreate, p: Platform = Depends(
                                user: str = Depends(current_user)):
     inv = {
         "id": new_id("inv"), "name": body.name, "purpose": body.purpose,
-        "legal_basis": body.legal_basis, "mode": body.mode,
+        "mode": body.mode,
         "settings": body.settings.model_dump(),
         "retention_days": body.retention_days or p.settings.retention_days,
         "legal_hold": 0, "created_by": user, "created_at": now(),
     }
     p.db.insert("investigations", inv)
     p.db.audit(user=user, action="investigation.create", investigation_id=inv["id"],
-               detail={"purpose": body.purpose, "legal_basis": body.legal_basis,
-                       "mode": body.mode})
+               detail={"purpose": body.purpose, "mode": body.mode})
     return _public(load_investigation(p, inv["id"]))
 
 

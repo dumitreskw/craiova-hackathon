@@ -31,15 +31,6 @@ const TAB_META: Record<Tab, [string, LucideIcon]> = {
   audit: ["Audit log", ScrollText],
 };
 
-const BASIS_LABEL: Record<string, string> = {
-  legitimate_interest: "Legitimate interest",
-  contract: "Contract",
-  legal_obligation: "Legal obligation",
-  consent: "Consent",
-  public_task: "Public task",
-  vital_interests: "Vital interests",
-};
-
 export function Workspace({ id, tab, onChanged }: { id: string; tab: Tab; onChanged: () => void }) {
   const [inv, error, , reload] = useLoad(() => api.get<Investigation>(`/investigations/${id}`), [id]);
   const stream = useInvestigationStream(id);
@@ -93,7 +84,7 @@ export function Workspace({ id, tab, onChanged }: { id: string; tab: Tab; onChan
           <Badge value={inv.mode} label={inv.mode === "active" ? "Active allowed" : "Passive only"}
             title={inv.mode === "active" ? "Active collection" : "Public sources only"} />
           <span className="text-xs text-muted">
-            {BASIS_LABEL[inv.legal_basis] || inv.legal_basis}, pivot depth {inv.settings?.max_depth ?? 1}, kept{" "}
+            Pivot depth {inv.settings?.max_depth ?? 1}, kept{" "}
             {inv.retention_days} days{inv.legal_hold ? ", legal hold" : ""}
           </span>
           <span className="ml-auto flex items-center gap-4 text-xs text-muted">
