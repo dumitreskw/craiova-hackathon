@@ -173,6 +173,9 @@ class Platform:
         url = f"{self.base}/api/v1{path}"
         data = json.dumps(body).encode() if body is not None else None
         req = request.Request(url, data=data, method=method)
+        # A real User-Agent: a proxy/WAF (e.g. Cloudflare) in front of the
+        # platform 403s the default "Python-urllib/x.y".
+        req.add_header("User-Agent", f"osint-worker/{VERSION}")
         req.add_header("X-Worker-Token", self.token)
         if data is not None:
             req.add_header("Content-Type", "application/json")
