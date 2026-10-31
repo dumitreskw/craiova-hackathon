@@ -209,6 +209,43 @@ async def test_persona_capture_marks_persona_used(hub, platform, investigation):
     assert hub.persona("li-ana")["last_used"] is not None
 
 
+def test_social_profile_worker_registered():
+    from app.agent.tools import DISPATCH_WORKER, WORKERS
+    assert "social_profile" in WORKERS
+    assert WORKERS["social_profile"]["reads_findings"] is True
+    assert WORKERS["social_profile"]["tools"] == []  # synthesis only, no connectors
+    assert "social_profile" in DISPATCH_WORKER["input_schema"]["properties"]["worker"]["enum"]
+
+
+def test_social_profile_worker_gets_findings_tools(make_investigation):
+    from app.agent.tools import worker_tools
+    inv = make_investigation()
+    names = {t["name"] for t in worker_tools(inv, "all", "social_profile")}
+    assert {"list_findings", "get_finding"} <= names
+    # It must not be handed collection connectors.
+    assert "dns" not in names and "dork_search" not in names
+
+
+async def test_get_finding_surfaces_social_capture_text(hub, platform, make_investigation):
+    import time
+    from app.agent.tools import ToolBox
+    hub.worker_seen = time.monotonic()
+    inv = make_investigation()
+    url = "https://www.instagram.com/jane.doe/"
+    _social_entity(platform, inv["id"], url)
+    await hub.capture(inv, url, user="t", run_by="analyst", persona="none", wait=False)
+    job = await hub.next_job(wait=0)
+    res = hub.complete(job["id"], _result_body(
+        persona_used=None, text="Climbing again this weekend!\nVolunteering at the shelter."))
+
+    box = ToolBox(platform.ledger, inv, "r1", "t", budget=5)
+    out = await box.call("get_finding", {"finding_id": res["finding_id"]})
+    payload, is_error = out
+    assert not is_error
+    assert "Climbing again this weekend" in payload
+    assert "jane doe" in payload.lower() or "janedoe" in payload.lower() or "profile" in payload
+
+
 async def test_heartbeat_updates_persona_health(hub):
     hub.create_persona("x-bot", "x", "nl", None, "tester")
     hub.heartbeat({"version": "1.0.0", "vpn": {"connected": True},

@@ -150,6 +150,17 @@ a note on the finding. Personas are logged in once, by hand, in a visible
 browser on Kali's desktop (a `login` job); terms-of-service and ban risk make
 every persona disposable.
 
+**Tendencies.** A deep-analysis worker, `social_profile`, reads the target's
+`social_capture` findings (and their change history) and synthesizes a profile —
+hobbies, habits and active hours, interests and topics, people/places/orgs they
+engage with, past, language and tone, and leanings such as politics or religion.
+It runs no connectors; it only reads findings and writes a summary that flows
+through the orchestrator into the report. Everything it states is cited to the
+capture it came from, and anything read between the lines is marked as an
+**inference** (low confidence, `sensitive` flag for politics/religion/health/
+sexuality/ethnicity), never asserted as fact — the report schema already carries
+`status: inference` and `sensitive` for exactly this.
+
 ### 4. Deep analysis (orchestrated multi-agent)
 
 The user asks for a deep analysis and gives minimal seed info — a name, URL,

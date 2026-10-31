@@ -183,6 +183,25 @@ WORKERS: dict[str, dict] = {
         "tools": ["sanctions", "interpol", "europol", "national_wanted", "read_page"],
         "focus": "sanctions, PEP and wanted-list screening of the person or organisation "
                  "targets; every name-only hit is an unverified possible match"},
+    # Synthesis only: reads the social_capture findings (no connectors). Enable the
+    # findings-reading tools via reads_findings below.
+    "social_profile": {
+        "tools": [],
+        "reads_findings": True,
+        "focus": "the target's tendencies from their captured public social profiles. "
+                 "First `list_findings` with connector=social_capture, then `get_finding` "
+                 "on each to read the profile fields, post text, links and change history. "
+                 "Build a picture: hobbies and activities, habits and routines (including "
+                 "when they are active), interests and the topics they post about, who and "
+                 "what they engage with, places and past history they reveal, language and "
+                 "tone, and — where the posts support it — leanings such as politics or "
+                 "religion. RULES: cite the finding id behind every item, and quote or point "
+                 "to the specific post/line. State only what the captures show as fact; "
+                 "anything you read between the lines is an INFERENCE — say so, keep its "
+                 "confidence low, and flag anything sensitive (politics, religion, health, "
+                 "sexuality, ethnicity) as a sensitive inference that may be wrong, never "
+                 "as established fact. If there are no social_capture findings yet, say so "
+                 "and stop (profiles must be captured first)"},
 }
 
 DISPATCH_WORKER = _tool(
@@ -203,6 +222,10 @@ def worker_tools(investigation: dict, costly: str, worker: str) -> list[dict]:
     allowed = set(WORKERS[worker]["tools"])
     tools = [t for t in connector_tools(investigation, costly)
              if t["name"] in allowed or t["name"] in ("get_entity", "graph_overview")]
+    # A synthesis worker (e.g. social_profile) reads existing findings instead of
+    # running connectors.
+    if WORKERS[worker].get("reads_findings"):
+        tools += [LIST_FINDINGS, GET_FINDING]
     return tools
 
 
@@ -477,6 +500,18 @@ class ToolBox:
                                "socials": raw.get("socials"),
                                "text": text[:12000] + (" [...]" if len(text) > 12000 else "")},
                               default=str, ensure_ascii=False)
+        if f["connector"] == "social_capture" and isinstance(raw, dict):
+            text = raw.get("text") or ""
+            return json.dumps({**{k: f[k] for k in keep}, "url": raw.get("final_url"),
+                               "platform": raw.get("platform"), "title": raw.get("title"),
+                               "logged_in": raw.get("logged_in"),
+                               "login_wall": raw.get("login_wall"),
+                               "captured_at": raw.get("captured_at"),
+                               "profile": raw.get("profile"),
+                               "links": (raw.get("links") or [])[:60],
+                               "changes": raw.get("changes"),
+                               "text": text[:12000] + (" [...]" if len(text) > 12000 else "")},
+                              default=str, ensure_ascii=False)
         return _dump({**{k: f[k] for k in keep},
                       "raw_excerpt": json.dumps(raw, default=str, ensure_ascii=False)[:5000]})
 
@@ -496,7 +531,7 @@ class ToolBox:
                 item["note"] = f["note"][:200]
             if f["error"]:
                 item["error"] = f["error"][:120]
-            if f["connector"] in ("web_read", "screenshot"):
+            if f["connector"] in ("web_read", "screenshot", "social_capture"):
                 title = self.db.one(
                     "SELECT e.attributes FROM entity_sources es JOIN entities e ON "
                     "e.id = es.entity_id WHERE es.finding_id = ? AND e.type = 'URL'", (f["id"],))
