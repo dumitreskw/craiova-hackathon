@@ -417,6 +417,29 @@ class SocialHub:
                                                           "error": "timed out"})
             return RunOutcome(None, None, error="the Kali worker did not finish in time")
 
+    async def wait(self, job_id: str, timeout: float = CAPTURE_TIMEOUT_S) -> RunOutcome:
+        """Wait for a queued job (search, interactions) to finish; for agents."""
+        row = self.db.get("social_jobs", job_id)
+        if row is None:
+            return RunOutcome(None, None, error="no such job")
+        if row["status"] not in ("queued", "running"):
+            failed = row["status"] != "done"
+            return RunOutcome(row["finding_id"], None,
+                              error=(row["error"] or row["status"]) if failed else None)
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._waiters[job_id] = future
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout)
+        except TimeoutError:
+            self._waiters.pop(job_id, None)
+            return RunOutcome(None, None, error="the Kali worker did not finish in time")
+
+    def platforms_ready(self) -> list[str]:
+        """Platforms with a logged-in persona, when the worker is online."""
+        if not self.online():
+            return []
+        return sorted({r["platform"] for r in self.personas() if r["status"] == "ok"})
+
     # --- search & interaction mapping --------------------------------------------------
 
     def search(self, investigation: dict, platform: str, query: str, *, user: str,

@@ -93,6 +93,17 @@ class ReportAgentRequest(BaseModel):
     goal: str = Field(min_length=5, max_length=2000)
     max_tool_calls: int = Field(25, ge=0, le=100,
                                 description="evidence captures it may take")
+    # Claude first separates the subject from namesakes and noise (app/review.py),
+    # and an independent reviewer fact-checks the report before it is final.
+    verify: bool = True
+    review: bool = True
+
+
+class VerifyRequest(BaseModel):
+    goal: str = Field("Separate the subject from namesakes and noise", min_length=5,
+                      max_length=2000)
+    max_tool_calls: int = Field(25, ge=0, le=100,
+                                description="page reads, searches and persona look-ups")
 
 
 class CaptureRequest(BaseModel):

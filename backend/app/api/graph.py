@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from .. import review
 from ..models import new_id, now
 from ..models.schemas import MergeRequest, NoteCreate, PivotRequest, StatusChange
 from ..platform import Platform
@@ -57,8 +58,10 @@ async def get_entity(entity_id: str, p: Platform = Depends(get_platform)):
                                 if k in ("id", "type", "key", "label", "status")}})
     notes = p.db.query("SELECT * FROM notes WHERE entity_id = ? ORDER BY created_at",
                        (entity_id,))
+    reviews = p.db.query("SELECT verdict, reason, reviewer, by_agent, created_at FROM "
+                         "entity_reviews WHERE entity_id = ? ORDER BY rowid", (entity_id,))
     return {**entity_view(row), "attribute_sources": row["attributes"], "sources": sources,
-            "edges": edges, "notes": notes}
+            "edges": edges, "notes": notes, "reviews": reviews}
 
 
 @router.get("/entities/{entity_id}/evidence")
@@ -70,14 +73,10 @@ async def entity_evidence(entity_id: str, p: Platform = Depends(get_platform)):
 
 
 async def _set_status(p: Platform, entity_id: str, status: str, reason: str, user: str):
-    row = load_entity(p, entity_id)
-    p.resolver.set_status(entity_id, status)
-    p.db.audit(user=user, action=f"entity.{status}", investigation_id=row["investigation_id"],
-               target=row["key"], detail={"entity_id": entity_id, "reason": reason,
-                                          "previous_status": row["status"]})
-    p.bus.publish(row["investigation_id"], "entity.updated",
-                  {"entity": entity_view(p.db.get("entities", entity_id))})
-    return entity_view(p.db.get("entities", entity_id))
+    """An analyst verdict: recorded like the agent's (app/review.py) and final."""
+    load_entity(p, entity_id)
+    return review.record(p.db, p.resolver, p.bus, entity_id, status, reason, reviewer=user,
+                         user=user, by_agent=False)
 
 
 @router.post("/entities/{entity_id}/confirm")

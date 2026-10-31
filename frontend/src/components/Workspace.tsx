@@ -156,7 +156,7 @@ export function Workspace({ id, tab, onChanged }: { id: string; tab: Tab; onChan
       {tab === "material" && <MaterialsView investigationId={id} stream={stream} />}
       {tab === "social" && <SocialView investigationId={id} stream={stream} />}
       {tab === "runs" && <RunsView investigationId={id} stream={stream} />}
-      {tab === "reports" && <ReportsView investigationId={id} stream={stream} />}
+      {tab === "reports" && <ReportsView investigationId={id} stream={stream} onOpenEntity={openEntity} />}
       {tab === "audit" && <AuditView investigationId={id} />}
       </ErrorBoundary>
     </div>

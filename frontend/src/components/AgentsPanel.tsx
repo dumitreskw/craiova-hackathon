@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ChevronDown, ChevronRight, FileText, Layers3, Play, Sparkles, Square } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Layers3, Play, ShieldCheck, Sparkles, Square } from "lucide-react";
 import { api, ApiError } from "../api";
 import { readCredit, useCredits } from "../credits";
 import type { InvestigationStream } from "../stream";
@@ -67,6 +67,8 @@ const KIND_LABEL: Record<string, string> = {
   deep: "Deep analysis",
   report: "Report writing",
   worker: "Worker",
+  verify: "Verification",
+  review: "Fact-check",
 };
 
 const TIERS: { value: CostTier; label: string; hint: string; sources: string[] }[] = [
@@ -75,7 +77,7 @@ const TIERS: { value: CostTier; label: string; hint: string; sources: string[] }
   { value: "all", label: "Everything", hint: "Adds DeHashed breach data, which spends paid credits on each search.", sources: ["hunter", "tomba", "dehashed"] },
 ];
 
-const AGENT_KINDS = new Set(["collection", "deep", "report", "worker"]);
+const AGENT_KINDS = new Set(["collection", "deep", "report", "worker", "verify", "review"]);
 
 export function AgentsPanel({ investigation, stream }: { investigation: Investigation; stream: InvestigationStream }) {
   const targets = investigation.targets || [];
@@ -137,6 +139,19 @@ export function AgentsPanel({ investigation, stream }: { investigation: Investig
     }
   }
 
+  async function verifyOnly() {
+    setBusy("verify");
+    setError(null);
+    try {
+      await api.post(`/investigations/${investigation.id}/verify`, {});
+      reloadSoon();
+    } catch (err) {
+      setError(explain(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function cancel(id: string) {
     try {
       await api.post(`/agent-runs/${id}/cancel`);
@@ -160,10 +175,16 @@ export function AgentsPanel({ investigation, stream }: { investigation: Investig
     }
     const children = new Map<string, Run[]>();
     const roots: Run[] = [];
+    const byId = new Map(all.map((r) => [r.id, r]));
+    const parentOf = (r: Run) => (r.stats?.parent as string | undefined) || live.get(r.id)?.parent;
     for (const r of all) {
-      const parent = (r.stats?.parent as string | undefined) || live.get(r.id)?.parent;
-      if (parent && all.some((p) => p.id === parent)) {
-        children.set(parent, [...(children.get(parent) || []), r]);
+      // Nest under the top-level run: deep -> report -> verify / fact-check all show together.
+      let top = parentOf(r);
+      for (let up = top ? byId.get(top) : undefined; up && parentOf(up) && byId.has(parentOf(up)!); up = byId.get(parentOf(up)!)) {
+        top = parentOf(up);
+      }
+      if (top && byId.has(top)) {
+        children.set(top, [...(children.get(top) || []), r]);
       } else {
         roots.push(r);
       }
@@ -250,14 +271,21 @@ export function AgentsPanel({ investigation, stream }: { investigation: Investig
           <form onSubmit={writeReport} className="panel p-5">
             <h2 className="section-title flex items-center gap-2"><FileText className="h-4 w-4 text-muted" aria-hidden />Write a report with Claude</h2>
             <p className="mt-1 text-sm text-muted">
-              Reads the graph only, keeps what serves the purpose and cites a finding for every claim. The draft opens
-              in Reports for your review.
+              Claude first sorts the subject from namesakes and noise (it can read pages and use the research personas),
+              then writes one report from everything that survived, and an independent fact-check compares every claim
+              with its sources before the report opens in Reports.
             </p>
             <label className="label mt-4" htmlFor="report-goal">What the report should answer</label>
             <textarea id="report-goal" className="field min-h-[72px]" value={reportGoal} onChange={(e) => setReportGoal(e.target.value)} />
-            <button className="btn mt-3" disabled={busy !== null || !reportGoal.trim()}>
-              {busy === "report" ? <Spinner /> : <FileText className="h-4 w-4" aria-hidden />}Write report
-            </button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button className="btn btn-primary" disabled={busy !== null || !reportGoal.trim()}>
+                {busy === "report" ? <Spinner /> : <FileText className="h-4 w-4" aria-hidden />}Write report
+              </button>
+              <button type="button" className="btn" disabled={busy !== null} onClick={verifyOnly}
+                title="Only the verification step: a verdict on every person, account, mention and domain">
+                {busy === "verify" ? <Spinner /> : <ShieldCheck className="h-4 w-4" aria-hidden />}Verify entities only
+              </button>
+            </div>
           </form>
 
           <ErrorBox error={error} onDismiss={() => setError(null)} />

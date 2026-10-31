@@ -32,6 +32,7 @@ class Platform:
             None if model_factory else (lambda: AnthropicModel(
                 self.settings.worker_model, self.settings.agent_progress_updates)))
         self.agents.model_factory_is_default = model_factory is None
+        self.agents.social = self.social
 
     def close(self) -> None:
         self.social.stop()

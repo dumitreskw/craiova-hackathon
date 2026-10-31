@@ -1,11 +1,38 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import {
-  Camera, Check, FileSearch, Link2, NotebookPen, Search, ShieldAlert, Users, X,
+  Camera, Check, FileSearch, Link2, NotebookPen, Search, ShieldAlert, Sparkles, UserCheck, Users, X,
 } from "lucide-react";
 import { api } from "../api";
 import { typeColor } from "../entityStyle";
-import type { Connector, EntityDetail, Finding } from "../types";
+import type { Connector, EntityDetail, EntityReview, Finding, Verdict } from "../types";
 import { Badge, ErrorBox, JsonView, Loading, Meter, Modal, Mono, shortHash, Spinner, useLoad, when } from "./ui";
+
+const VERDICT_TEXT: Record<Verdict, string> = {
+  confirmed: "is the subject's",
+  rejected: "is not the subject's",
+  uncertain: "could not settle this",
+};
+
+/** The latest verdict on the entity, and who gave it. */
+function VerdictNote({ review }: { review?: EntityReview }) {
+  if (!review) return null;
+  const who = review.by_agent ? "Claude" : review.reviewer;
+  const tone = review.verdict === "confirmed" ? "border-ok/50 bg-ok/5"
+    : review.verdict === "rejected" ? "border-line bg-raised/60" : "border-warn/60 bg-warn/10";
+  const head = review.verdict === "uncertain"
+    ? `${who} ${VERDICT_TEXT.uncertain}; it needs you`
+    : `${who}: this ${VERDICT_TEXT[review.verdict]}`;
+  return (
+    <div className={`rounded-md border p-3 text-sm ${tone}`} role="note">
+      <p className="flex items-center gap-2 font-medium">
+        {review.by_agent ? <Sparkles className="h-4 w-4 text-accent-text" aria-hidden /> : <UserCheck className="h-4 w-4 text-muted" aria-hidden />}
+        {head}
+      </p>
+      <p className="mt-1 text-muted">{review.reason}</p>
+      <p className="mt-1 text-xs text-muted">{when(review.created_at)}</p>
+    </div>
+  );
+}
 
 function fmt(v: unknown): string {
   if (v === null || v === undefined) return "—";
@@ -112,6 +139,8 @@ export function EntityPanel({
           </p>
         </div>
       </div>
+
+      <VerdictNote review={ent.reviews?.[ent.reviews.length - 1]} />
 
       {candidate && (
         <div className="rounded-md border border-dashed border-danger/70 bg-danger/5 p-3.5 text-sm">

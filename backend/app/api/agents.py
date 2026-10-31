@@ -8,7 +8,9 @@ from fastapi.responses import FileResponse
 from ..agent import ensure_target
 from ..agent.model import configured
 from ..evidence import capture, read_page, screenshot_dir
-from ..models.schemas import CaptureRequest, CollectRequest, DeepRequest, ReportAgentRequest
+from .. import review
+from ..models.schemas import (CaptureRequest, CollectRequest, DeepRequest, ReportAgentRequest,
+                              VerifyRequest)
 from ..platform import Platform
 from ..resolver import entity_view
 from .deps import current_user, get_platform, load_investigation
@@ -56,13 +58,38 @@ async def deep(investigation_id: str, body: DeepRequest,
 @router.post("/investigations/{investigation_id}/report-agent", status_code=202)
 async def report_agent(investigation_id: str, body: ReportAgentRequest,
                        p: Platform = Depends(get_platform), user: str = Depends(current_user)):
-    """Start the report agent: reads the graph, captures evidence, submits a linted report."""
+    """Start the report pipeline: verification, the writer (one dossier, linted report),
+    then an independent fact-check and one revision round."""
     inv = load_investigation(p, investigation_id)
     _require_claude(p)
     if not p.db.one("SELECT 1 AS x FROM findings WHERE investigation_id = ?", (investigation_id,)):
         raise HTTPException(422, "nothing collected yet; run a scan or the collection agent first")
-    run_id = p.agents.start(inv, "report", body.goal, user, body.max_tool_calls)
+    run_id = p.agents.start(inv, "report", body.goal, user, body.max_tool_calls,
+                            verify=body.verify, review=body.review)
     return {"run_id": run_id, "kind": "report"}
+
+
+@router.post("/investigations/{investigation_id}/verify", status_code=202)
+async def verify(investigation_id: str, body: VerifyRequest,
+                 p: Platform = Depends(get_platform), user: str = Depends(current_user)):
+    """Start the verification agent: a verdict on every entity worth one."""
+    inv = load_investigation(p, investigation_id)
+    _require_claude(p)
+    run_id = p.agents.start(inv, "verify", body.goal, user, body.max_tool_calls)
+    return {"run_id": run_id, "kind": "verify"}
+
+
+@router.get("/investigations/{investigation_id}/reviews")
+async def reviews(investigation_id: str, p: Platform = Depends(get_platform)):
+    """Verdict counts, and the entities left uncertain for the analyst."""
+    load_investigation(p, investigation_id)
+    uncertain = p.db.query(
+        "SELECT r.entity_id, r.reason, r.reviewer, r.by_agent, r.created_at, e.type, e.key "
+        "FROM entity_reviews r JOIN entities e ON e.id = r.entity_id "
+        "WHERE r.investigation_id = ? AND r.verdict = 'uncertain' AND r.rowid = "
+        "(SELECT max(rowid) FROM entity_reviews x WHERE x.entity_id = r.entity_id) "
+        "ORDER BY e.type, e.key", (investigation_id,))
+    return {**review.summary(p.db, investigation_id), "uncertain_items": uncertain}
 
 
 @router.post("/investigations/{investigation_id}/capture")

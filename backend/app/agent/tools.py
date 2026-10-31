@@ -11,6 +11,12 @@ the quick scan. On top of the gate, two agent-specific rules:
 Report tools are read-only views of the graph, ``capture_evidence``, and
 ``submit_report`` (which lints the draft and stores it).
 
+Verification tools (``review_queue``, ``set_verdicts``) let the verify agent
+judge whether each entity is about the subject (app/review.py); the reviewer
+agent fact-checks a submitted report with ``submit_review``. Persona tools
+(``social_capture``, ``social_search``) drive the logged-in research personas
+on the Kali VM (app/social.py), when the worker is online.
+
 ``read_material`` reads analyst-supplied material (app/materials.py) in
 chunks. It is not a lookup and costs no budget; a worker can only read the
 material its orchestrator handed it.
@@ -22,6 +28,7 @@ stays cached.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,12 +37,14 @@ from connectors.base import EntityType
 
 from .. import materials as mat
 from .. import report as rep
+from .. import review
 from ..detect import DetectError, canonical_key, normalize_name
 from ..evidence import capture, read_page
 from ..ledger import Ledger, RunOutcome
 from ..models import new_id, now
 from ..resolver import entity_view
 from ..scan import COST_TIERS
+from ..social import SocialError
 
 MAX_RESULT_CHARS = 8000
 MATERIAL_CHUNK = 12000
@@ -133,6 +142,74 @@ SUBMIT_REPORT = _tool(
     "fixed and the report resubmitted.", {"report": REPORT_SCHEMA}, ["report"])
 
 
+REVIEW_QUEUE = _tool(
+    "review_queue",
+    "Entities that still need a verdict (is this really the subject, or tied to them?), "
+    "a page at a time, with their attributes, where they came from and what they link "
+    "to. Sanctions/wanted-list name matches come first.",
+    {"offset": {"type": "integer", "minimum": 0},
+     "limit": {"type": "integer", "minimum": 1, "maximum": 60}}, [])
+SET_VERDICTS = _tool(
+    "set_verdicts",
+    "Record verdicts. confirmed: about the subject (or the subject's own asset), with "
+    "the evidence that ties it. rejected: a namesake, an unrelated account, a third "
+    "party, or noise. uncertain: can't tell from what was collected; say what would "
+    "settle it. Every verdict needs a reason a reviewer can check.",
+    {"verdicts": {"type": "array", "maxItems": 60, "items": {
+        "type": "object",
+        "properties": {"entity_id": {"type": "string"},
+                       "verdict": {"type": "string", "enum": list(review.VERDICTS)},
+                       "reason": {"type": "string"}},
+        "required": ["entity_id", "verdict", "reason"], "additionalProperties": False}}},
+    ["verdicts"])
+SOCIAL_CAPTURE = _tool(
+    "social_capture",
+    "Open a social-media profile through a logged-in research persona on the Kali VM "
+    "(read-only: it never follows, likes or messages) and return the profile fields, "
+    "recent post text and links. Use it to settle whether an account is the subject "
+    "(bio, employer, location, linked accounts, photos' captions). The profile must "
+    "already be in the graph. Can take a few minutes. Counts as a lookup.",
+    {"url": {"type": "string"},
+     "entity_id": {"type": "string", "description": "the SocialProfile entity, if known"}},
+    ["url"])
+SUBMIT_REVIEW = _tool(
+    "submit_review",
+    "Submit the fact-check of the report: every problem found, by claim id. An empty "
+    "problems list means the report can go out as it is.",
+    {"problems": {"type": "array", "items": {
+        "type": "object",
+        "properties": {
+            "claim_id": {"type": "string", "description": "claim id, or 'report' for the "
+                         "report as a whole (summary, structure, missing topic)"},
+            "kind": {"type": "string", "enum": [
+                "unsupported", "wrong_subject", "overstated", "irrelevant", "missing_caveat",
+                "contradiction", "missing", "other"]},
+            "detail": {"type": "string", "description": "what is wrong and what the cited "
+                       "source actually says"},
+            "fix": {"type": "string"}},
+        "required": ["claim_id", "kind", "detail"], "additionalProperties": False}},
+     "assessment": {"type": "string", "description": "two or three sentences on the report "
+                    "as a whole"}},
+    ["problems", "assessment"])
+
+
+def social_search_tool(platforms: list[str]) -> dict:
+    return _tool(
+        "social_search",
+        "Search inside a social platform through a logged-in persona (people search), "
+        "reaching profiles public web search can't. Results are candidate profiles: open "
+        "the likely ones with social_capture before you rely on them. Counts as a lookup.",
+        {"platform": {"type": "string", "enum": platforms},
+         "query": {"type": "string", "description": "a name, optionally with employer or "
+                   "city, e.g. 'Jane Doe Bucharest'"}},
+        ["platform", "query"])
+
+
+def persona_tools(platforms: list[str]) -> list[dict]:
+    """Persona tools, offered only when the Kali worker has a logged-in persona."""
+    return [SOCIAL_CAPTURE, social_search_tool(platforms)] if platforms else []
+
+
 READ_PAGE = _tool(
     "read_page",
     "Read a web page (search hit, profile, article, registry page): its text as markdown, "
@@ -168,7 +245,7 @@ WORKERS: dict[str, dict] = {
                  "pages, press, profiles; read the pages, don't rely on snippets"},
     "people_identity": {
         "tools": ["hunter", "tomba", "holehe", "maigret", "github_user", "gravatar",
-                  "dork_search", "read_page"],
+                  "dork_search", "read_page", "social_capture", "social_search"],
         "focus": "the people and accounts connected to the target: staff and roles, "
                  "email pattern, accounts tied to the target's emails and usernames"},
     "company_registry": {
@@ -220,9 +297,10 @@ DISPATCH_WORKER = _tool(
     ["worker", "goal", "budget"])
 
 
-def worker_tools(investigation: dict, costly: str, worker: str) -> list[dict]:
+def worker_tools(investigation: dict, costly: str, worker: str,
+                 platforms: list[str] | None = None) -> list[dict]:
     allowed = set(WORKERS[worker]["tools"])
-    tools = [t for t in connector_tools(investigation, costly)
+    tools = [t for t in [*connector_tools(investigation, costly), *persona_tools(platforms or [])]
              if t["name"] in allowed or t["name"] in ("get_entity", "graph_overview")]
     # A synthesis worker (e.g. social_profile) reads existing findings instead of
     # running connectors.
@@ -272,6 +350,18 @@ def connector_tools(investigation: dict, costly: str = "all") -> list[dict]:
     return sorted(tools, key=lambda t: t["name"]) + [GET_ENTITY, GRAPH_OVERVIEW]
 
 
+def verify_tools(investigation: dict, costly: str, platforms: list[str]) -> list[dict]:
+    """Judge entities; corroborate with web search, page reads and the personas."""
+    lookups = [t for t in connector_tools(investigation, costly)
+               if t["name"] in ("dork_search", "read_page")]
+    return sorted([*lookups, *persona_tools(platforms), GET_ENTITY, GET_FINDING,
+                   LIST_FINDINGS, REVIEW_QUEUE, SET_VERDICTS], key=lambda t: t["name"])
+
+
+def reviewer_tools() -> list[dict]:
+    return [GET_ENTITY, GET_FINDING, LIST_FINDINGS, SUBMIT_REVIEW]
+
+
 def report_tools() -> list[dict]:
     tools = [CAPTURE_EVIDENCE, GET_ENTITY, GET_FINDING, GRAPH_OVERVIEW, LIST_ENTITIES,
              LIST_FINDINGS, SUBMIT_REPORT]
@@ -309,12 +399,15 @@ class ToolBox:
     budget: int
     costly: str = "all"
     runner: Any = None  # the AgentRunner, for dispatch_worker
+    social: Any = None  # the SocialHub, for the persona tools
     # Material ids this run may read; None means every material of the investigation.
     materials: set[str] | None = None
     calls: int = 0
     report_id: str | None = None
     report_ok: bool = False
     findings: list[str] = field(default_factory=list)
+    verdicts: int = 0
+    review: dict | None = None  # what submit_review received
 
     @property
     def db(self):
@@ -658,6 +751,90 @@ class ToolBox:
         return _dump({"finding_id": outcome.finding_id, "note": outcome.result.note,
                       "blocked": raw.get("blocked"), "title": raw.get("title"),
                       "http_status": raw.get("http_status")})
+
+    # --- verification -------------------------------------------------------------
+
+    async def _t_review_queue(self, args: dict) -> str:
+        offset = max(0, int(args.get("offset") or 0))
+        limit = max(1, min(int(args.get("limit") or 40), 60))
+        return _dump(review.queue(self.db, self.inv_id, offset=offset, limit=limit))
+
+    async def _t_set_verdicts(self, args: dict) -> str:
+        items = args.get("verdicts")
+        if not isinstance(items, list) or not items:
+            raise ToolError("verdicts must be a non-empty list")
+        done, errors = Counter(), []
+        for item in items[:60]:
+            if not isinstance(item, dict):
+                errors.append("each verdict must be an object")
+                continue
+            eid = str(item.get("entity_id") or "")
+            row = self.db.get("entities", eid)
+            if row is None or row["investigation_id"] != self.inv_id:
+                errors.append(f"{eid}: not an entity of this investigation")
+                continue
+            try:
+                review.record(self.db, self.ledger.resolver, self.ledger.bus, eid,
+                              str(item.get("verdict")), str(item.get("reason") or ""),
+                              reviewer=self.run_id, user=self.user, by_agent=True)
+            except review.ReviewError as e:
+                errors.append(str(e))
+                continue
+            done[str(item.get("verdict"))] += 1
+            self.verdicts += 1
+        left = review.queue(self.db, self.inv_id, limit=0)["total_pending"]
+        return _dump({"recorded": dict(done), "errors": errors, "still_pending": left})
+
+    # --- personas -------------------------------------------------------------------
+
+    def _persona_outcome(self, outcome: RunOutcome) -> str:
+        if outcome.refused:
+            raise ToolError(f"Refused by the platform: {outcome.error}")
+        if outcome.error:
+            raise ToolError(f"Persona job failed: {outcome.error}")
+        if not outcome.finding_id:
+            raise ToolError("The persona job returned nothing")
+        self.findings.append(outcome.finding_id)
+        return outcome.finding_id
+
+    async def _t_social_capture(self, args: dict) -> str:
+        if self.social is None or not self.social.platforms_ready():
+            raise ToolError("No research persona is available (Kali worker offline or no "
+                            "logged-in persona)")
+        url = _str(args, "url", max_len=2000)
+        about = _str(args, "entity_id", required=False, max_len=40)
+        if about:
+            row = self.db.get("entities", about)
+            about = about if row and row["investigation_id"] == self.inv_id else None
+        self._spend()
+        outcome = await self.social.capture(self.investigation, url, user=self.user,
+                                            run_by=self.run_id, entity_id=about)
+        fid = self._persona_outcome(outcome)
+        return await self._t_get_finding({"finding_id": fid})
+
+    async def _t_social_search(self, args: dict) -> str:
+        platforms = self.social.platforms_ready() if self.social is not None else []
+        platform = _str(args, "platform", max_len=40)
+        if platform not in platforms:
+            raise ToolError(f"No logged-in persona for {platform}; available: "
+                            f"{', '.join(platforms) or 'none'}")
+        query = _str(args, "query", max_len=200)
+        self._spend()
+        try:
+            job = self.social.search(self.investigation, platform, query, user=self.user,
+                                     run_by=self.run_id)
+        except SocialError as e:
+            raise ToolError(str(e)) from e
+        fid = self._persona_outcome(await self.social.wait(job["id"]))
+        return await self._t_get_finding({"finding_id": fid})
+
+    async def _t_submit_review(self, args: dict) -> str:
+        problems = args.get("problems")
+        if not isinstance(problems, list):
+            raise ToolError("problems must be a list (empty when the report is fine)")
+        self.review = {"problems": [p for p in problems if isinstance(p, dict)][:80],
+                       "assessment": str(args.get("assessment") or "")[:2000]}
+        return _dump({"recorded": len(self.review["problems"])})
 
     async def _t_submit_report(self, args: dict) -> str:
         body = args.get("report")

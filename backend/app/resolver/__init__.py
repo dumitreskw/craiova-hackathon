@@ -173,6 +173,7 @@ class Resolver:
                     else:
                         c.execute(f"UPDATE edges SET {col} = ? WHERE id = ?", (keep_id, edge["id"]))
             c.execute("UPDATE notes SET entity_id = ? WHERE entity_id = ?", (keep_id, mid))
+            c.execute("UPDATE entity_reviews SET entity_id = ? WHERE entity_id = ?", (keep_id, mid))
             c.execute("UPDATE targets SET entity_id = ? WHERE entity_id = ?", (keep_id, mid))
             c.execute("DELETE FROM entities WHERE id = ?", (mid,))
         self.db.update("entities", keep_id, {"attributes": keep["attributes"],

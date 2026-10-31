@@ -110,6 +110,20 @@ CREATE TABLE IF NOT EXISTS notes (
     created_at TEXT NOT NULL
 );
 
+-- Verdicts on whether an entity is really about the subject: by Claude's
+-- verification agent or by an analyst (app/review.py). The latest one counts;
+-- an analyst verdict is never overridden by the agent.
+CREATE TABLE IF NOT EXISTS entity_reviews (
+    id               TEXT PRIMARY KEY,
+    investigation_id TEXT NOT NULL REFERENCES investigations(id),
+    entity_id        TEXT NOT NULL REFERENCES entities(id),
+    verdict          TEXT NOT NULL,                       -- confirmed | rejected | uncertain
+    reason           TEXT NOT NULL,
+    reviewer         TEXT NOT NULL,                       -- analyst name, or the agent run id
+    by_agent         INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_runs (
     id               TEXT PRIMARY KEY,
     investigation_id TEXT NOT NULL REFERENCES investigations(id),
@@ -229,6 +243,7 @@ CREATE INDEX IF NOT EXISTS ix_entities_inv ON entities(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_edges_inv ON edges(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_audit_inv ON audit(investigation_id, ts);
 CREATE INDEX IF NOT EXISTS ix_materials_inv ON materials(investigation_id);
+CREATE INDEX IF NOT EXISTS ix_reviews_entity ON entity_reviews(entity_id, created_at);
 CREATE INDEX IF NOT EXISTS ix_social_jobs_status ON social_jobs(status, created_at);
 """
 

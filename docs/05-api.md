@@ -34,8 +34,12 @@ DELETE /investigations/{id}            delete (soft) + purge evidence job
 ```text
 POST   /investigations/{id}/targets    add seed + start a quick scan
 POST   /investigations/{id}/collect    start the collection agent {goal, target?, max_tool_calls}
-POST   /investigations/{id}/report-agent  start the report agent {goal, max_tool_calls}
-POST   /investigations/{id}/deep       deep analysis: orchestrator + parallel workers + report
+POST   /investigations/{id}/report-agent  report pipeline: verify -> write -> fact-check
+                                       {goal, max_tool_calls, verify=true, review=true}
+POST   /investigations/{id}/verify     verification agent only {goal?, max_tool_calls}
+GET    /investigations/{id}/reviews    verdict counts + entities left uncertain for the analyst
+POST   /investigations/{id}/deep       deep analysis: orchestrator + parallel workers + the
+                                       report pipeline
                                        {goal, target?, max_tool_calls (shared), costly_connectors}
 POST   /investigations/{id}/capture    screenshot a URL as evidence now {url, entity_id?}
 GET    /findings/{fid}/screenshot      the banner-stamped PNG of a capture
@@ -64,8 +68,15 @@ POST   /entities/{eid}/pivot           run selected connectors on an entity
 
 ```json
 // POST /investigations/{id}/report-agent
-// The report agent reads the existing graph and captures evidence; it runs no
-// collection tools. It submits its report through the linter until it passes.
+// 1. verify: Claude judges every person, account, mention and domain worth it
+//    (is it the subject?), with page reads, searches and the research personas;
+//    verdicts go to entity_reviews and set the entity status. An analyst's
+//    verdict is final; name matches on wanted/sanctions lists are never
+//    confirmed by Claude.
+// 2. write: one writer works from a dossier of everything that survived
+//    (app/agent/dossier.py), captures evidence and submits through the linter.
+// 3. review: an independent reviewer checks each claim against its sources;
+//    the writer fixes what it flags (one round). The result is kept in body.qa.
 { "goal": "Map the attack surface and who is behind it", "max_tool_calls": 25 }
 
 // 202 Accepted

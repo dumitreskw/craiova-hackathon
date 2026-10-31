@@ -83,11 +83,31 @@ export interface EntityEdge extends EdgeView {
   other?: { id: string; type: string; key: string; label: string; status: EntityStatus };
 }
 
+export type Verdict = "confirmed" | "rejected" | "uncertain";
+
+/** Is this entity really about the subject? By Claude's verification agent or an analyst. */
+export interface EntityReview {
+  verdict: Verdict;
+  reason: string;
+  reviewer: string;
+  by_agent: number | boolean;
+  created_at: string;
+}
+
 export interface EntityDetail extends EntityView {
   attribute_sources: Record<string, { value: unknown; sources: string[] }[]>;
   sources: EntitySource[];
   edges: EntityEdge[];
   notes: Note[];
+  reviews?: EntityReview[];
+}
+
+export interface ReviewSummary {
+  confirmed: number;
+  rejected: number;
+  uncertain: number;
+  pending: number;
+  uncertain_items: { entity_id: string; reason: string; type: string; key: string }[];
 }
 
 export interface Finding {

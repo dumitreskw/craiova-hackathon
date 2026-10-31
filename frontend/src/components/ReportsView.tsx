@@ -1,10 +1,10 @@
-import { useEffect, useState, type SyntheticEvent } from "react";
+import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import {
-  AlertTriangle, Camera, CheckCircle2, Download, FilePlus2, FileText, Tag, X,
+  AlertTriangle, Camera, CheckCircle2, Download, FilePlus2, FileText, Sparkles, Tag, X,
 } from "lucide-react";
 import { api, ApiError, download, qs } from "../api";
 import type { InvestigationStream } from "../stream";
-import type { LintIssue, Report, ReportSummary } from "../types";
+import type { LintIssue, Report, ReportSummary, ReviewSummary } from "../types";
 import { FindingModal } from "./EntityPanel";
 import { ago, Badge, Empty, ErrorBox, Loading, Mono, Segmented, Spinner, useLoad, when } from "./ui";
 
@@ -21,7 +21,9 @@ const AUDIENCE_HINT: Record<Audience, string> = {
   client: "For the client: statements, sources with their public pages, what each returned and page captures. No workspace details.",
 };
 
-export function ReportsView({ investigationId, stream }: { investigationId: string; stream: InvestigationStream }) {
+export function ReportsView({ investigationId, stream, onOpenEntity }: {
+  investigationId: string; stream: InvestigationStream; onOpenEntity: (entityId: string) => void;
+}) {
   const [list, listError, , reloadList] = useLoad(
     () => api.get<ReportSummary[]>(`/investigations/${investigationId}/reports`),
     [investigationId],
@@ -30,6 +32,9 @@ export function ReportsView({ investigationId, stream }: { investigationId: stri
   const [error, setError] = useState<unknown>(null);
   const [creating, setCreating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [writing, setWriting] = useState<string | null>(null);
+  const [reviews, , , reloadReviews] = useLoad(
+    () => api.get<ReviewSummary>(`/investigations/${investigationId}/reviews`), [investigationId]);
 
   useEffect(() => {
     if (!selected && list && list.length) setSelected(list[0].id);
@@ -40,6 +45,11 @@ export function ReportsView({ investigationId, stream }: { investigationId: stri
     () =>
       stream.subscribe((e) => {
         if (e.event !== "agent.finished") return;
+        if (e.data.kind === "verify" || e.data.kind === "report") reloadReviews();
+        if (e.data.run_id && String(e.data.run_id) === writingRef.current) {
+          setWriting(null);
+          if (e.data.status !== "finished") setNotice(`Claude stopped: ${String(e.data.summary || e.data.status)}`);
+        }
         const rid = e.data.report_id ? String(e.data.report_id) : null;
         if (rid || e.data.kind === "report" || e.data.kind === "deep") {
           reloadList();
@@ -52,6 +62,22 @@ export function ReportsView({ investigationId, stream }: { investigationId: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [investigationId],
   );
+
+  const writingRef = useRef<string | null>(null);
+  writingRef.current = writing;
+
+  async function writeWithClaude() {
+    setError(null);
+    setNotice(null);
+    try {
+      const r = await api.post<{ run_id: string }>(`/investigations/${investigationId}/report-agent`, {
+        goal: "A due-diligence report on the subject that serves the investigation's purpose.",
+      });
+      setWriting(r.run_id);
+    } catch (e) {
+      setError(e);
+    }
+  }
 
   async function createDraft() {
     setCreating(true);
@@ -72,13 +98,20 @@ export function ReportsView({ investigationId, stream }: { investigationId: stri
     <div className="flex min-h-0 flex-1">
       <aside className="scroll-thin flex w-72 shrink-0 flex-col overflow-y-auto border-r border-line bg-panel max-lg:w-60">
         <div className="space-y-2 border-b border-line p-4">
-          <button className="btn btn-primary w-full" onClick={createDraft} disabled={creating}>
-            {creating ? <Spinner /> : <FilePlus2 className="h-4 w-4" aria-hidden />}Draft from graph
+          <button className="btn btn-primary w-full" onClick={writeWithClaude} disabled={writing !== null}>
+            {writing ? <Spinner /> : <Sparkles className="h-4 w-4" aria-hidden />}
+            {writing ? "Claude is writing" : "Write report with Claude"}
           </button>
           <p className="hint">
-            A plain draft of what the sources returned, every line cited. For a curated report, use "Write report" in
-            Claude agents.
+            {writing
+              ? "Verifying entities, writing, then fact-checking each claim. Follow it in Claude agents; the report opens here."
+              : "Sorts the subject from namesakes and noise, writes one report from all of it, then fact-checks every claim."}
           </p>
+          <button className="btn btn-quiet btn-sm w-full" onClick={createDraft} disabled={creating}
+            title="Lists what the sources returned, without curation. Unverified people, accounts and mentions are left out.">
+            {creating ? <Spinner className="h-3.5 w-3.5" /> : <FilePlus2 className="h-3.5 w-3.5" aria-hidden />}Raw draft, no AI
+          </button>
+          {reviews && <ReviewBox reviews={reviews} onOpenEntity={onOpenEntity} />}
           <ErrorBox error={error || listError} />
         </div>
         <ul className="p-2" aria-label="Reports">
@@ -117,6 +150,36 @@ export function ReportsView({ investigationId, stream }: { investigationId: stri
           <Loading>Loading reports</Loading>
         )}
       </div>
+    </div>
+  );
+}
+
+/** What verification decided, and the entities left for the analyst. */
+function ReviewBox({ reviews, onOpenEntity }: { reviews: ReviewSummary; onOpenEntity: (id: string) => void }) {
+  const decided = reviews.confirmed + reviews.rejected + reviews.uncertain;
+  if (!decided && !reviews.pending) return null;
+  return (
+    <div className="rounded-md border border-line bg-ground/60 p-3 text-xs">
+      <p className="font-medium text-ink">Verification</p>
+      <p className="mt-1 text-muted">
+        {reviews.confirmed} confirmed, {reviews.rejected} rejected as not the subject
+        {reviews.pending ? `, ${reviews.pending} not reviewed yet` : ""}.
+      </p>
+      {reviews.uncertain_items.length > 0 && (
+        <>
+          <p className="mt-2 font-medium text-warn">{reviews.uncertain_items.length} need you</p>
+          <ul className="mt-1 space-y-1">
+            {reviews.uncertain_items.slice(0, 8).map((u) => (
+              <li key={u.entity_id}>
+                <button className="w-full truncate text-left hover:text-ink" title={u.reason}
+                  onClick={() => onOpenEntity(u.entity_id)}>
+                  <span className="text-muted">{u.type}</span> {u.key}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
