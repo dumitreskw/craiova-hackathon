@@ -230,3 +230,26 @@ async def test_purge_expired_deletes_data_but_keeps_audit(platform, make_investi
     assert platform.db.query("SELECT * FROM findings WHERE investigation_id = ?", (held["id"],))
     assert not (settings.evidence_dir / inv["id"]).exists()
     assert platform.db.query("SELECT * FROM audit WHERE action = 'investigation.purge'")
+
+
+def test_old_database_drops_removed_not_null_column(tmp_path):
+    """A database from before legal_basis was removed still accepts new investigations."""
+    from app.models import Database
+    path = tmp_path / "old.sqlite"
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE investigations (id TEXT PRIMARY KEY, name TEXT NOT NULL, "
+                "purpose TEXT NOT NULL, legal_basis TEXT NOT NULL, "
+                "mode TEXT NOT NULL DEFAULT 'passive', settings TEXT NOT NULL DEFAULT '{}', "
+                "retention_days INTEGER NOT NULL, legal_hold INTEGER NOT NULL DEFAULT 0, "
+                "created_by TEXT NOT NULL, created_at TEXT NOT NULL, deleted_at TEXT)")
+    old.execute("INSERT INTO investigations (id, name, purpose, legal_basis, retention_days, "
+                "created_by, created_at) VALUES ('inv_old', 'Old', 'p', 'legitimate_interest', "
+                "90, 'a', '2026-10-30T00:00:00+00:00')")
+    old.commit()
+    old.close()
+    db = Database(path)
+    db.insert("investigations", {"id": "inv_new", "name": "New", "purpose": "p",
+                                 "retention_days": 90, "created_by": "a",
+                                 "created_at": "2026-10-31T00:00:00+00:00"})
+    assert {r["id"] for r in db.query("SELECT id FROM investigations")} == {"inv_old", "inv_new"}
+    db.close()

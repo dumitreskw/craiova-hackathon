@@ -40,6 +40,9 @@ services:
     env_file: .env
     environment:
       OSINT_DATA_DIR: /data
+      # Build id at runtime too, when the platform only sets SOURCE_COMMIT for
+      # the container (Coolify: "Include Source Commit in Build").
+      OSINT_BUILD: ${SOURCE_COMMIT:-}
       SEARXNG_URL: http://searxng:8080
     volumes:
       - osint_data:/data

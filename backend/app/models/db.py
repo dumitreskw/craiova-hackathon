@@ -240,6 +240,13 @@ MIGRATIONS = [
     ("agent_runs", "transcript", "TEXT NOT NULL DEFAULT '[]'"),
 ]
 
+# Columns removed after a release: (table, column). Dropped on open, so an
+# older database file doesn't reject inserts that no longer set them (a NOT
+# NULL column the code stopped writing fails every INSERT).
+DROPPED = [
+    ("investigations", "legal_basis"),
+]
+
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -272,6 +279,10 @@ class Database:
             cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             if column not in cols:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        for table, column in DROPPED:
+            cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            if column in cols:
+                self.conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
         self.conn.commit()
 
     def close(self) -> None:
