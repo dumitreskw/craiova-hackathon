@@ -18,6 +18,8 @@ dependencies = [
     "markitdown[docx,pdf]>=0.1.9",
     # Verifying Keycloak tokens (app/auth/oidc.py).
     "pyjwt[crypto]>=2.10",
+    # Profile-picture fingerprints (app/avatars.py).
+    "pillow>=11",
 ]
 
 [project.optional-dependencies]

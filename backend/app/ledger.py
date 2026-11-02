@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -24,13 +25,14 @@ from typing import Any
 import connectors
 from connectors.base import ConnectorResult
 
-from . import guard, identity
+from . import avatars, guard, identity
 from .config import Settings
 from .events import EventBus
 from .models import Database, new_id, now
 from .resolver import FoldResult, Resolver
 
 CALL_TIMEOUT_S = 90
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -48,6 +50,7 @@ class Ledger:
         self.bus = bus
         self.settings = settings
         self.resolver = Resolver(db)
+        self._background: set[asyncio.Task] = set()
 
     async def run(self, investigation: dict[str, Any], connector: str, arg: str, *,
                   user: str, run_by: str, entity_id: str | None = None,
@@ -83,9 +86,34 @@ class Ledger:
             error = f"{type(e).__name__}: {e}"[:500]
         duration_ms = int((time.monotonic() - started) * 1000)
 
-        return self.record(investigation, connector, call, result, error, user=user,
-                           run_by=run_by, entity_id=entity_id, passive=spec.passive,
-                           duration_ms=duration_ms)
+        outcome = self.record(investigation, connector, call, result, error, user=user,
+                              run_by=run_by, entity_id=entity_id, passive=spec.passive,
+                              duration_ms=duration_ms)
+        await self.link_avatars(inv_id, outcome)
+        return outcome
+
+    async def link_avatars(self, investigation_id: str, outcome: RunOutcome) -> None:
+        """Fingerprint new profile pictures and link accounts that share one
+        (app/avatars.py). Never fails the lookup it follows."""
+        if outcome.fold is None or not outcome.fold.touched:
+            return
+        try:
+            await avatars.process(self, investigation_id, sorted(outcome.fold.touched))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("avatar matching failed")
+
+    def schedule_avatars(self, investigation_id: str, outcome: RunOutcome) -> None:
+        """:meth:`link_avatars` in the background, for synchronous recorders
+        (persona captures arrive through the worker's HTTP callback)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self.link_avatars(investigation_id, outcome))
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     def record(self, investigation: dict[str, Any], connector: str, call: dict[str, Any],
                result: ConnectorResult | None, error: str | None = None, *, user: str,

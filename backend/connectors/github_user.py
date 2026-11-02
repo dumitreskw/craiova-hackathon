@@ -50,6 +50,7 @@ async def github_user(username: str) -> ConnectorResult:
             "display_name": user.get("name"), "bio": user.get("bio"),
             "company": user.get("company"), "location": user.get("location"),
             "followers": user.get("followers"), "public_repos": user.get("public_repos"),
+            "avatar": user.get("avatar_url"),
             "created_at": user.get("created_at"),
         }),
     ]
