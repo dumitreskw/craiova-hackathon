@@ -6,6 +6,9 @@ export interface InvestigationSettings {
   max_depth: number;
   connectors: string[];
   exclude_connectors: string[];
+  costly_connectors?: "none" | "metered" | "all";
+  /** Run verification automatically after a scan that brings back namesakes. */
+  auto_verify?: boolean;
 }
 
 /** What the brief says about who a person target is (backend app/identity.py). */
@@ -45,6 +48,8 @@ export interface IdentityCluster {
   entity_ids: string[];
   is_subject: number | boolean;
   chosen: number | boolean;
+  /** What the sources establish about this person; picking them adds it to the profile. */
+  facts?: SubjectProfile;
   run_id: string | null;
   created_at: string;
 }
@@ -376,6 +381,15 @@ export interface SocialStatus {
   busy?: boolean;
   queued: number;
   personas: Persona[];
+  health?: Record<string, { ok: number; needs_login: number; disabled: number }>;
+  alerts?: SocialAlert[];
+}
+
+/** A persona problem to show: LinkedIn is read only through logged-in personas. */
+export interface SocialAlert {
+  platform: string;
+  level: "error" | "warn";
+  message: string;
 }
 
 export type SocialJobKind = "capture" | "login" | "check" | "search" | "interactions";

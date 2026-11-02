@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { AlertTriangle } from "lucide-react";
 import { api, ApiError } from "../api";
 import type { InvestigationStream } from "../stream";
 import type {
   Persona,
   SocialCaptureResult,
+  SocialAlert,
   SocialJob,
   SocialStatus,
   SocialWatch,
@@ -70,6 +72,7 @@ export function SocialView({
     <div className="flex min-h-0 flex-1 max-md:flex-col">
       <aside className="scroll-thin w-[380px] shrink-0 space-y-5 overflow-y-auto border-r border-line bg-panel p-4 max-md:w-full max-md:border-b max-md:border-r-0">
         <WorkerStatus status={status} onRefresh={reloadStatus} />
+        <SocialAlerts alerts={status?.alerts ?? []} />
         <p className="text-xs text-muted">
           Captures use research accounts ("personas") whose logged-in sessions live on the Kali VM and go out
           over Mullvad. Public profiles only; the worker reads and screenshots, it never follows, likes,
@@ -113,6 +116,23 @@ export function SocialView({
         <Jobs jobs={jobs || []} />
       </section>
     </div>
+  );
+}
+
+/** Persona problems, LinkedIn first: it can only be read through a logged-in account. */
+export function SocialAlerts({ alerts }: { alerts: SocialAlert[] }) {
+  if (!alerts.length) return null;
+  return (
+    <ul className="space-y-2" aria-label="Research account alerts">
+      {alerts.map((a) => (
+        <li key={a.platform + a.message} role={a.level === "error" ? "alert" : "status"}
+          className={`flex gap-2 rounded-lg border p-3 text-sm ${
+            a.level === "error" ? "border-danger/50 bg-danger/10 text-danger" : "border-warn/50 bg-warn/10 text-warn"}`}>
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <span>{a.message}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

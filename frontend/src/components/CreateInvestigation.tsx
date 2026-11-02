@@ -9,6 +9,7 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
   const [mode, setMode] = useState<Mode>("passive");
   const [maxDepth, setMaxDepth] = useState(1);
   const [costly, setCostly] = useState<"none" | "metered" | "all">("all");
+  const [autoVerify, setAutoVerify] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
@@ -24,7 +25,7 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
         purpose: purpose.trim(),
         mode,
         settings: { max_depth: maxDepth, connectors: ["*"], exclude_connectors: [],
-                    costly_connectors: costly },
+                    costly_connectors: costly, auto_verify: autoVerify },
       });
       onCreated(inv);
     } catch (err) {
@@ -95,6 +96,18 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
           </select>
           <p className="mt-1 text-xs text-muted">Quotas are shared by everyone on this server and enforced per month. Paid sources (DeHashed) never run in automatic scans; a Claude agent run uses them only when you allow paid tools for that run. <a className="text-accent-text hover:underline" href="#/sources">See what is left</a>.</p>
         </div>
+
+        <label className="flex items-start gap-3">
+          <input type="checkbox" className="mt-1 h-4 w-4 accent-[rgb(var(--accent))]" checked={autoVerify}
+            onChange={(e) => setAutoVerify(e.target.checked)} />
+          <span>
+            <span className="text-sm font-medium">Sort namesakes automatically</span>
+            <span className="mt-0.5 block text-xs text-muted">
+              When a scan brings back other people with the subject's name or list matches, Claude's verification
+              runs on its own (a few lookups) so the who's-who is ready when you open the investigation.
+            </span>
+          </span>
+        </label>
 
         <ErrorBox error={error} onDismiss={() => setError(null)} />
 

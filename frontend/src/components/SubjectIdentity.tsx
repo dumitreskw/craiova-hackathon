@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { AlertTriangle, Check, IdCard, Sparkles, Users } from "lucide-react";
+import { AlertTriangle, Check, IdCard, Lock, Sparkles, Users } from "lucide-react";
 import { api } from "../api";
 import type { InvestigationStream } from "../stream";
-import type { IdentityCluster, IdentityOverview, SubjectProfile, Target } from "../types";
+import type { IdentityCluster, IdentityOverview, Investigation, SocialStatus, SubjectProfile, Target } from "../types";
 import { ErrorBox, Modal, Pill, useLoad } from "./ui";
 
 // Who is the subject? The profile form for a person target, the common-name
@@ -135,8 +135,17 @@ function ProfileModal({ investigationId, target, onClose, onSaved }: {
 }
 
 /** Pick which same-name person is the subject. */
+function factsText(f: SubjectProfile | undefined): string {
+  if (!f) return "";
+  return [
+    f.birth_year ? `born ${f.birth_year}` : "",
+    ...(f.nationalities ?? []), ...(f.locations ?? []), ...(f.employers ?? []), ...(f.roles ?? []),
+    ...(f.education ?? []),
+  ].filter(Boolean).join(", ");
+}
+
 function WhosWho({ clusters, onClose, onChosen }: {
-  clusters: IdentityCluster[]; onClose: () => void; onChosen: () => void;
+  clusters: IdentityCluster[]; onClose: () => void; onChosen: (learned: string) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -145,9 +154,10 @@ function WhosWho({ clusters, onClose, onChosen }: {
     setBusy(c.id);
     setError(null);
     try {
-      await api.post(`/identity-clusters/${c.id}/choose`,
+      const r = await api.post<{ learned?: SubjectProfile; run_ids?: string[] }>(`/identity-clusters/${c.id}/choose`,
         { reason: c.distinguishing ? `matches the subject: ${c.distinguishing}` : `picked "${c.label}" as the subject` });
-      onChosen();
+      const learned = factsText(r.learned);
+      onChosen(learned ? `Added to the profile: ${learned}.${r.run_ids?.length ? " Searching again with it." : ""}` : "");
     } catch (err) {
       setError(err);
     } finally {
@@ -174,6 +184,9 @@ function WhosWho({ clusters, onClose, onChosen }: {
             </div>
             {c.distinguishing && <p className="mt-1 text-sm"><span className="text-muted">Tells them apart: </span>{c.distinguishing}</p>}
             {c.summary && <p className="mt-1 text-sm text-muted">{c.summary}</p>}
+            {factsText(c.facts) && (
+              <p className="mt-1 text-xs text-muted"><span className="font-medium">Known: </span>{factsText(c.facts)}</p>
+            )}
             {!c.chosen && (
               <button className="btn mt-3" disabled={busy !== null} onClick={() => choose(c)}>
                 <Check className="h-4 w-4" aria-hidden />{busy === c.id ? "Applying" : "This is the subject"}
@@ -187,10 +200,29 @@ function WhosWho({ clusters, onClose, onChosen }: {
 }
 
 /** Under the target bar: profile buttons, the common-name warning, who's who. */
-export function IdentityStrip({ investigationId, targets, stream, onSaved }: {
-  investigationId: string; targets: Target[]; stream: InvestigationStream; onSaved: () => void;
+export function IdentityStrip({ inv, targets, stream, onSaved }: {
+  inv: Investigation; targets: Target[]; stream: InvestigationStream; onSaved: () => void;
 }) {
+  const investigationId = inv.id;
   const people = targets.filter((t) => t.type === "Person");
+  const [social] = useLoad(
+    () => (people.length ? api.get<SocialStatus>("/social/status") : Promise.resolve(null)),
+    [people.length],
+  );
+  const linkedin = (social?.alerts ?? []).find((a) => a.platform === "linkedin");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [autoBusy, setAutoBusy] = useState(false);
+  const autoVerify = !!inv.settings?.auto_verify;
+
+  async function toggleAuto() {
+    setAutoBusy(true);
+    try {
+      await api.patch(`/investigations/${investigationId}`, { settings: { ...inv.settings, auto_verify: !autoVerify } });
+      onSaved();
+    } finally {
+      setAutoBusy(false);
+    }
+  }
   const [ov, , , reload] = useLoad(
     () => (people.length ? api.get<IdentityOverview>(`/investigations/${investigationId}/identity`) : Promise.resolve(null)),
     [investigationId, people.length],
@@ -239,11 +271,28 @@ export function IdentityStrip({ investigationId, targets, stream, onSaved }: {
           {clusters.some((c) => c.chosen) ? "" : ", pick the subject"}
         </button>
       )}
+      <label className="inline-flex items-center gap-1.5 text-muted" title="After a scan that brings back namesakes or list matches, Claude's verification sorts them on its own">
+        <input type="checkbox" className="h-3.5 w-3.5 accent-[rgb(var(--accent))]" checked={autoVerify}
+          disabled={autoBusy} onChange={toggleAuto} />
+        Sort namesakes automatically
+      </label>
+      {linkedin && (
+        <a href={`#/inv/${investigationId}/social`} role="status" title={linkedin.message}
+          className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 ${
+            linkedin.level === "error" ? "border-danger/50 bg-danger/10 text-danger" : "border-warn/50 bg-warn/10 text-warn"}`}>
+          <Lock className="h-3.5 w-3.5" aria-hidden />
+          {linkedin.level === "error" ? "LinkedIn can't be read" : "LinkedIn: no backup account"}
+        </a>
+      )}
+      {notice && <span className="text-muted" role="status">{notice}</span>}
       {editing && (
         <ProfileModal investigationId={investigationId} target={editing} onClose={() => setEditing(null)}
           onSaved={() => { reload(); onSaved(); }} />
       )}
-      {whosWho && <WhosWho clusters={clusters} onClose={() => setWhosWho(false)} onChosen={() => { reload(); setWhosWho(false); }} />}
+      {whosWho && (
+        <WhosWho clusters={clusters} onClose={() => setWhosWho(false)}
+          onChosen={(learned) => { reload(); onSaved(); setWhosWho(false); setNotice(learned || null); }} />
+      )}
     </div>
   );
 }

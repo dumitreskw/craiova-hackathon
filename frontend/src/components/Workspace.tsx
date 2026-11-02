@@ -248,7 +248,7 @@ function TargetBar({ inv, stream, onAdded }: { inv: Investigation; stream: Inves
           </div>
         )}
       </form>
-      <IdentityStrip investigationId={inv.id} targets={targets} stream={stream} onSaved={onAdded} />
+      <IdentityStrip inv={inv} targets={targets} stream={stream} onSaved={onAdded} />
       {error ? <div className="mt-2"><ErrorBox error={error} onDismiss={() => setError(null)} /></div> : null}
     </div>
   );
