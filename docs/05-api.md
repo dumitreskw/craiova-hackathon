@@ -39,7 +39,8 @@ PUT    /investigations/{id}/targets/{tid}/profile  replace a Person target's sub
                                        {profile, scan}; new identifiers become targets
 GET    /investigations/{id}/identity   profiles, namesake / list-match counts, common-name
                                        warning, who's-who clusters
-POST   /identity-clusters/{cid}/choose the analyst picks the subject {reason}
+POST   /identity-clusters/{cid}/choose the analyst picks the subject {reason}; returns what
+                                       it added to the profile (learned) and the re-search run_ids
 POST   /investigations/{id}/collect    start the collection agent {goal, target?, max_tool_calls}
 POST   /investigations/{id}/report-agent  report pipeline: verify -> write -> fact-check
                                        {goal, max_tool_calls, verify=true, review=true}

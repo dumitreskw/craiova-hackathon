@@ -108,6 +108,21 @@ confidence = 1 - Π (1 - reliability(source_i) * match_quality_i)
    `namesake` node (`key = "<name> @ <what it came with>"`) tied to the
    same-name person by a `possible_match` edge (`backend/app/resolver`).
 
+5. **Name variants are leads**: a middle or maiden name, a nickname (Ionuț /
+   Ion, Alex / Alexandru), a Cyrillic or phonetic spelling (Попеску, Popesku)
+   is a `possible_match` with basis "name variant", never a merge
+   (`connectors/_names.py`, also used to filter wanted lists).
+6. **Same profile picture**: entities with an `avatar` get a 64-bit
+   perceptual fingerprint (`avatar_hash`); two within 6 bits get a
+   `same_avatar` edge, which counts as a link for rule 4. Placeholder and
+   near-blank pictures, and a picture shared by more than 3 entities (a
+   default avatar), never link (`backend/app/avatars.py`).
+
+Confidence counts **independent publishers**, not findings: two reads of the
+same site, a search hit and the page it points to, or `otx_domain` and
+`otx_ip` are one source (`resolver.publisher`). The report dossier gives each
+entity's `independent_sources`.
+
 ## Subject profile and who's who
 
 A Person target carries a `profile` (birth year, nationalities, places,
@@ -126,7 +141,16 @@ employers, known emails / usernames / phones; `backend/app/identity.py`):
 entity_ids, is_subject, chosen }`: the verification agent groups same-name
 results into distinct people (`set_identities`); the analyst picks the subject
 (`POST /identity-clusters/{id}/choose`), which confirms that person's entities
-and rejects the others' (screening hits keep their own review).
+and rejects the others' (screening hits keep their own review). The agent
+also records each person's `facts` (birth year, cities, employers, roles);
+picking one adds them, and what the subject's own entities show (their
+companies, profile location), to the profile without overwriting it, and the
+name search re-runs with the new context.
+
+With `settings.auto_verify`, a scan that brings back two or more namesakes or
+list matches for a person target starts a small verification run (12
+lookups) on its own, unless one is already running or no model is
+configured (`verify.skipped` event).
 
 ## Investigation-level objects
 

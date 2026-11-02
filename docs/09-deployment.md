@@ -104,6 +104,11 @@ sources (Hunter 50/month, Tomba 25/month) are enforced by the ledger across
 all investigations; paid ones (DeHashed) never run in the quick scan, only in
 agent runs that opt into `costly_connectors: "all"`.
 
+LinkedIn is read only through logged-in personas on the Kali worker. Keep at
+least two LinkedIn personas logged in: a capture whose persona gets logged out
+fails over to the other once, and `GET /social/status` (and the Social tab)
+raises an alert when none or only one is healthy.
+
 For local development without the tools installed, `OSINT_KALI_SSH=kali` in
 `backend/.env` runs subfinder, dnstwist, holehe and maigret on the Kali VM
 over ssh, and `OSINT_LIGHTPANDA_CMD` can point at the Lightpanda Docker image.
