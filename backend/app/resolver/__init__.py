@@ -13,6 +13,15 @@ Implements docs/03-data-model.md:
   names are identical. It becomes a separate ``candidate`` entity, keyed by
   name + official listing, linked to same-name entities only through a
   low-confidence ``possible_match`` edge. An analyst confirms or rejects it.
+* **No name-only merges of people.** A Person a connector returns (a
+  Companies House officer, a Hunter contact, a breach record's name) merges
+  into an existing same-name Person only when it is linked through something
+  that person already has: an email, username or phone, its company, or the
+  entity the lookup ran on. Names compare without diacritics, case or word
+  order (app/identity.py). Otherwise it becomes a separate ``namesake`` node,
+  keyed by what it came with, tied to the same-name person by a
+  ``possible_match`` edge, so a namesake's job, nationality and emails never
+  become the subject's and the scan never follows them.
 """
 
 from __future__ import annotations
@@ -22,9 +31,11 @@ from typing import Any
 
 from connectors.base import ConnectorResult, EntityCandidate, EntityType
 
+from ..identity import identifiers, name_key, profile_for_entity
 from ..models import Database, new_id, now
 
 CANDIDATE_EDGE = "possible_match"
+NAMESAKE_QUALITY = 0.3
 
 
 @dataclass
@@ -106,6 +117,10 @@ class Resolver:
                 candidates[(cand.type.value, cand.key, url)] = eid
                 self._link_possible_matches(out, investigation_id, finding_id, reliability,
                                             cand, eid)
+            elif cand.type == EntityType.PERSON:
+                eid = self._person(out, investigation_id, finding_id, reliability, result,
+                                   cand, trigger_entity_id)
+                local[(cand.type.value, cand.key)] = eid
             else:
                 eid = self._upsert_entity(out, investigation_id, finding_id, reliability, cand)
                 local[(cand.type.value, cand.key)] = eid
@@ -116,9 +131,9 @@ class Resolver:
                 src = candidates.get((rel.from_type.value, rel.from_key, rel.to_key))
             else:
                 src = self._resolve(out, investigation_id, finding_id, reliability, local,
-                                    rel.from_type, rel.from_key)
+                                    rel.from_type, rel.from_key, result, trigger_entity_id)
             dst = self._resolve(out, investigation_id, finding_id, reliability, local,
-                                rel.to_type, rel.to_key)
+                                rel.to_type, rel.to_key, result, trigger_entity_id)
             if not src or not dst or src == dst:
                 continue
             quality = 0.3 if rel.attributes.get("unverified") else 1.0
@@ -252,9 +267,16 @@ class Resolver:
             (investigation_id, etype, key))
 
     def _resolve(self, out: FoldResult, investigation_id: str, finding_id: str,
-                 reliability: float, local: dict, etype: EntityType, key: str) -> str | None:
+                 reliability: float, local: dict, etype: EntityType, key: str,
+                 result: ConnectorResult | None = None,
+                 trigger_entity_id: str | None = None) -> str | None:
         if (etype.value, key) in local:
             return local[(etype.value, key)]
+        if etype == EntityType.PERSON and result is not None:
+            eid = self._person(out, investigation_id, finding_id, reliability, result,
+                               EntityCandidate(etype, key), trigger_entity_id)
+            local[(etype.value, key)] = eid
+            return eid
         row = self._find(investigation_id, etype.value, key)
         if row and row["status"] != "candidate":
             return row["id"]
@@ -347,12 +369,113 @@ class Resolver:
             conf = combine([tuple(s) for s in scores]) if scores else row["confidence"]
         self.db.update("entities", entity_id, {"confidence": conf})
 
+    # --- people ------------------------------------------------------------------------
+
+    def _person(self, out: FoldResult, investigation_id: str, finding_id: str,
+                reliability: float, result: ConnectorResult, cand: EntityCandidate,
+                trigger_entity_id: str | None) -> str:
+        """Fold a Person: into a same-name person it is linked to, or as a namesake."""
+        nkey = name_key(cand.key)
+        same = [r for r in self.db.query(
+            "SELECT id, key, attributes FROM entities WHERE investigation_id = ? "
+            "AND type = 'Person' AND status != 'candidate'", (investigation_id,))
+            if name_key(r["key"]) == nkey] if nkey else []
+        if not same:
+            return self._upsert_entity(out, investigation_id, finding_id, reliability, cand)
+        context = self._context(result, cand.key)
+        # The subject (no namesake flag) first.
+        for row in sorted(same, key=lambda r: "namesake" in (r["attributes"] or {})):
+            if self._linked(investigation_id, row["id"], context, trigger_entity_id):
+                return self._upsert_entity(out, investigation_id, finding_id, reliability,
+                                           cand, key=row["key"])
+        # A namesake: its own node, keyed by what it came with, so the same
+        # namesake seen again through the same company or email lands on it.
+        ctx = next((k for _t, k in context), None)
+        if ctx is None and trigger_entity_id:
+            trig = self.db.get("entities", trigger_entity_id)
+            ctx = trig["key"] if trig else None
+        key = f"{cand.key} @ {ctx or result.source}"
+        attrs = {**cand.attributes, "namesake": True,
+                 "title": cand.attributes.get("title") or cand.key.title()}
+        eid = self._upsert_entity(out, investigation_id, finding_id, reliability,
+                                  EntityCandidate(cand.type, cand.key, attrs,
+                                                  cand.match_quality), key=key)
+        for row in same:
+            if row["id"] == eid or "namesake" in (row["attributes"] or {}):
+                continue
+            self._upsert_edge(out, investigation_id, finding_id, reliability, NAMESAKE_QUALITY,
+                              CANDIDATE_EDGE, row["id"], eid,
+                              {"unverified": True, "basis": "same name only",
+                               "namesake": True})
+        return eid
+
+    @staticmethod
+    def _context(result: ConnectorResult, person_key: str) -> list[tuple[str, str]]:
+        """``(type, key)`` of what the result ties this person to."""
+        out: list[tuple[str, str]] = []
+        for rel in result.relationships:
+            if rel.attributes.get("unverified"):
+                continue
+            if rel.from_type == EntityType.PERSON and rel.from_key == person_key:
+                other = (rel.to_type.value, rel.to_key)
+            elif rel.to_type == EntityType.PERSON and rel.to_key == person_key:
+                other = (rel.from_type.value, rel.from_key)
+            else:
+                continue
+            if other[0] != EntityType.PERSON.value and other not in out:
+                out.append(other)
+        return out
+
+    def _linked(self, investigation_id: str, person_id: str, context: list[tuple[str, str]],
+                trigger_entity_id: str | None) -> bool:
+        """Is ``person_id`` tied to anything in ``context`` or to the lookup's entity?
+
+        A person's anchors: itself, its direct neighbours (not through a
+        possible_match), and for a target the profile's identifiers and
+        employers and the investigation's other targets.
+        """
+        anchors = {person_id}
+        for e in self.db.query(
+                "SELECT from_id, to_id FROM edges WHERE (from_id = ? OR to_id = ?) "
+                "AND type != ?", (person_id, person_id, CANDIDATE_EDGE)):
+            anchors.add(e["to_id"] if e["from_id"] == person_id else e["from_id"])
+        keys: set[tuple[str, str]] = set()
+        employers: set[str] = set()
+        if self.db.one("SELECT 1 FROM targets WHERE entity_id = ?", (person_id,)):
+            anchors |= {r["entity_id"] for r in self.db.query(
+                "SELECT entity_id FROM targets WHERE investigation_id = ? "
+                "AND entity_id IS NOT NULL", (investigation_id,))}
+            profile = profile_for_entity(self.db, person_id)
+            for value, etype in identifiers(profile):
+                keys.add((etype, "+" + "".join(c for c in value if c.isdigit())
+                          if etype == EntityType.PHONE.value else value.lower()))
+            employers = {name_key(x) for x in profile.get("employers") or []}
+        if trigger_entity_id and trigger_entity_id in anchors:
+            return True
+        for etype, key in context:
+            if (etype, key) in keys:
+                return True
+            row = self._find(investigation_id, etype, key)
+            if row and row["status"] != "rejected" and row["id"] in anchors:
+                return True
+            if etype == EntityType.ORGANIZATION.value and employers:
+                names = {name_key(key)}
+                if row:
+                    names |= {name_key(str(v["value"]))
+                              for v in row["attributes"].get("legal_name", [])}
+                if names & employers:
+                    return True
+        return False
+
     def _link_possible_matches(self, out: FoldResult, investigation_id: str, finding_id: str,
                                reliability: float, cand: EntityCandidate,
                                candidate_id: str) -> None:
+        nkey = name_key(cand.key)
         for row in self.db.query(
-                "SELECT id FROM entities WHERE investigation_id=? AND type=? AND key=? "
-                "AND status != 'candidate'", (investigation_id, cand.type.value, cand.key)):
+                "SELECT id, key, attributes FROM entities WHERE investigation_id=? AND type=? "
+                "AND status != 'candidate'", (investigation_id, cand.type.value)):
+            if name_key(row["key"]) != nkey or "namesake" in (row["attributes"] or {}):
+                continue
             self._upsert_edge(out, investigation_id, finding_id, reliability, cand.match_quality,
                               CANDIDATE_EDGE, row["id"], candidate_id,
                               {"unverified": True, "basis": "name match only"})

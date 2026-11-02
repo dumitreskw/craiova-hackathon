@@ -24,7 +24,7 @@ from typing import Any
 import connectors
 from connectors.base import ConnectorResult
 
-from . import guard
+from . import guard, identity
 from .config import Settings
 from .events import EventBus
 from .models import Database, new_id, now
@@ -134,6 +134,10 @@ class Ledger:
             self.bus.publish(inv_id, "entity.created", {"entity": ent})
         for edge in fold.new_edges:
             self.bus.publish(inv_id, "edge.created", {"edge": edge})
+        # Screening hits that contradict the subject profile (birth year,
+        # nationality) are rejected right away, with the reason recorded.
+        identity.screen_candidates(self.db, self.resolver, self.bus, inv_id,
+                                   sorted(fold.touched), user=user)
         self.bus.publish(inv_id, "tool.finished", {
             "connector": connector, "finding_id": finding_id, "found": len(result.entities),
             "new_entities": len(fold.new_entities), "note": result.note})

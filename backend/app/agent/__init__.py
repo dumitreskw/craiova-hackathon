@@ -29,6 +29,7 @@ import asyncio
 from collections import Counter
 from typing import Any, Callable
 
+from .. import identity
 from .. import materials as mat
 from .. import review as rv
 from ..detect import DetectError, detect
@@ -260,6 +261,7 @@ class AgentRunner:
             stats["review_problems"] = len(qa["problems"]) if qa else 0
         if kind == "verify":
             stats["verdicts"] = box.verdicts
+            stats["identities"] = box.identities
             stats["pending"] = rv.queue(self.db, inv_id, limit=0)["total_pending"]
         if kind == "review":
             stats["review"] = box.review
@@ -352,6 +354,8 @@ class AgentRunner:
         ]
         if anchors:
             lines.append("The target's own domains: " + ", ".join(anchors))
+        if who := identity.brief(self.db, inv["id"]):
+            lines.append(who)
         if kind == "worker":
             lines.append(f"Your workstream: {worker} — {WORKERS[worker]['focus']}.")
         lines += [f"Goal: {goal}", f"Tool budget: {budget} "
@@ -371,6 +375,11 @@ class AgentRunner:
             pending = rv.queue(self.db, inv["id"], limit=0)
             lines.append(f"Subject kind: {pending['subject_kind']}. Entities awaiting a "
                          f"verdict: {pending['total_pending']}. Start with review_queue.")
+            namesakes = sum(identity.name_stats(self.db, inv["id"], t["entity_id"])
+                            ["namesakes"] for t in identity.person_targets(self.db, inv["id"]))
+            if namesakes:
+                lines.append(f"Same-name people in the graph: {namesakes} namesake node(s) "
+                             "besides the target. Group them with set_identities.")
             runs = self.db.query(
                 "SELECT kind, summary FROM agent_runs WHERE investigation_id = ? AND kind IN "
                 "('collection', 'deep') AND summary IS NOT NULL AND summary != '' "
@@ -390,6 +399,7 @@ class AgentRunner:
         lines = [f"Investigation: {inv['name']}", f"Purpose: {inv['purpose']}",
                  f"Goal of the report: {goal}",
                  f"Subject kind: {rv.subject_kind(self.db, inv['id'])}",
+                 *([who] if (who := identity.brief(self.db, inv["id"])) else []),
                  f"\n# Report: {body.get('title')}", f"Summary: {body.get('summary', '')}"]
         shown: set[str] = set()
         for section in body.get("sections", []):

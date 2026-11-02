@@ -28,11 +28,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from connectors.base import (ConnectorResult, EntityCandidate, EntityType,
-                             RelationshipCandidate)
+from connectors.base import ConnectorResult, EntityCandidate, EntityType, RelationshipCandidate
 
 from . import guard
-from .evidence import screenshot_dir
+from .evidence import LOGIN_ONLY_HOSTS, LOGIN_ONLY_MESSAGE, screenshot_dir
 from .ledger import Ledger, RunOutcome
 from .models import new_id, now
 
@@ -350,6 +349,9 @@ class SocialHub:
             raise SocialError("this profile is not in the investigation's graph; add it as a "
                               "target (or find it with a lookup) first")
         mode = "auto"
+        login_only = platform in set(LOGIN_ONLY_HOSTS.values())
+        if login_only and persona == "none":
+            raise SocialError(LOGIN_ONLY_MESSAGE.format(platform=platform.title()))
         if persona == "none":
             persona, mode = None, "anonymous"
         elif persona:
@@ -365,6 +367,12 @@ class SocialHub:
         else:
             row = self._pick_persona(platform)
             persona = row["name"] if row else None
+            if login_only:
+                if persona is None:
+                    raise SocialError(
+                        f"No logged-in {platform.title()} research account. "
+                        + LOGIN_ONLY_MESSAGE.format(platform=platform.title()))
+                mode = "persona"   # skip the anonymous attempt: it only sees the wall
         if persona:
             hour_ago = (datetime.now(UTC) - timedelta(hours=1)).isoformat(timespec="seconds")
             used = self.db.one("SELECT count(*) AS n FROM social_jobs WHERE persona = ? "

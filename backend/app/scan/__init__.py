@@ -12,6 +12,11 @@ new entities up to ``max_depth``. Guard rails:
   GitHub display name, a registrant) is recorded, but the scan does not run
   web searches or wanted/sanctions checks on them. Profiling someone needs a
   purpose; the analyst can still pivot on that person explicitly.
+* **a person is searched with context.** With a subject profile, the web
+  search is the name plus the employer or city (app/identity.py), not the
+  bare name that returns every namesake.
+* **no paid sources.** DeHashed spends credits per search, so it is offered
+  to the agents (when the run allows paid tools), never run by the scan.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from typing import Callable
 import connectors
 from connectors.base import EntityType
 
-from .. import guard
+from .. import guard, identity
 from ..ledger import Ledger
 from ..models import new_id, now
 from ..resolver import entity_view
@@ -39,9 +44,9 @@ PIVOTS: dict[EntityType, list[str]] = {
                               "sanctions", "seap", "news", "dork_search"],
     EntityType.PERSON: ["sanctions", "interpol", "europol", "national_wanted",
                         "court_records", "news", "dork_search"],
-    EntityType.EMAIL: ["gravatar", "holehe", "dehashed", "hibp", "email_rep", "dork_search"],
+    EntityType.EMAIL: ["gravatar", "holehe", "hibp", "email_rep", "dork_search"],
     EntityType.USERNAME: ["github_user", "maigret"],
-    EntityType.PHONE: ["phone_lookup", "hibp", "dehashed"],
+    EntityType.PHONE: ["phone_lookup", "hibp"],
 }
 
 # Which cost tiers a run may use: investigation setting "costly_connectors".
@@ -94,7 +99,9 @@ def connectors_for(entity: dict, investigation: dict, depth: int = 0) -> list[st
     return out
 
 
-def arg_for(connector: str, entity: dict) -> str:
+def arg_for(connector: str, entity: dict, profile: dict | None = None) -> str:
+    if connector == "dork_search" and entity["type"] == EntityType.PERSON.value and profile:
+        return identity.search_query(entity["label"], profile)
     return ARG.get(connector, lambda e: e["key"])(entity)
 
 
@@ -184,6 +191,8 @@ class QuickScan:
                     if row is None or row["status"] in ("candidate", "rejected"):
                         continue
                     ent = entity_view(row)
+                    profile = (identity.profile_for_entity(self.db, eid)
+                               if ent["type"] == EntityType.PERSON.value else None)
                     if depth > 0:
                         if EntityType(ent["type"]) not in PIVOT_ON_DISCOVERED:
                             continue
@@ -207,7 +216,7 @@ class QuickScan:
                             break
                         seen.add(mark)
                         stats["calls"] += 1
-                        jobs.append(call(eid, depth, name, arg_for(name, ent)))
+                        jobs.append(call(eid, depth, name, arg_for(name, ent, profile)))
 
                 frontier = []
                 for eid, depth, outcome in await asyncio.gather(*jobs):

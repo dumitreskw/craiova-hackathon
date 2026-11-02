@@ -81,6 +81,8 @@ SOURCE_RELIABILITY: dict[str, float] = {
     "virustotal": 0.85,
     # Files, notes and links the analyst supplies: leads of unknown provenance.
     "analyst_material": 0.7,
+    # The subject profile in the analyst's brief (app/identity.py).
+    "subject_profile": 0.7,
     # Persona/anonymous social capture through the Kali worker (app/social.py).
     "social_capture": 0.85,
     # Leads from in-platform search / co-engagement: candidates to confirm, not facts.

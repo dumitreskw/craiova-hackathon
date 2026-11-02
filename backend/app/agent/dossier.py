@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .. import review
+from .. import identity, review
 from ..models import Database
 from ..report import LEGAL_CONNECTORS
 from ..resolver import best_attributes
@@ -46,6 +46,16 @@ def build(db: Database, data_dir: Any, investigation: dict, goal: str) -> str:
         "Targets: " + (", ".join(f"{t['value']} ({t['type']}, entity {t['entity_id']})"
                                  for t in targets) or "none"),
     ]
+    if who := identity.brief(db, inv_id):
+        out.append(who)
+    people = identity.clusters(db, inv_id)
+    if people:
+        out.append("Same-name people (who's who from verification; write only about the "
+                   "subject, and mention the others only to say they are different people):")
+        for c in people:
+            mark = (" [CHOSEN BY THE ANALYST AS THE SUBJECT]" if c["chosen"] else
+                    " [the subject, per verification]" if c["is_subject"] else "")
+            out.append(f"- {c['label']}{mark}: {c['distinguishing']}. {c['summary'][:400]}")
 
     # --- verification ---------------------------------------------------------------
     counts = review.summary(db, inv_id)

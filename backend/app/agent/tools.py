@@ -12,7 +12,9 @@ Report tools are read-only views of the graph, ``capture_evidence``, and
 ``submit_report`` (which lints the draft and stores it).
 
 Verification tools (``review_queue``, ``set_verdicts``) let the verify agent
-judge whether each entity is about the subject (app/review.py); the reviewer
+judge whether each entity is about the subject (app/review.py), and
+``set_identities`` record the who's-who of same-name people
+(app/identity.py) for the analyst to pick the subject from; the reviewer
 agent fact-checks a submitted report with ``submit_review``. Persona tools
 (``social_capture``, ``social_search``) drive the logged-in research personas
 on the Kali VM (app/social.py), when the worker is online.
@@ -35,11 +37,11 @@ from typing import Any
 import connectors
 from connectors.base import EntityType
 
+from .. import identity, review
 from .. import materials as mat
 from .. import report as rep
-from .. import review
 from ..detect import DetectError, canonical_key, normalize_name
-from ..evidence import capture, read_page
+from ..evidence import LOGIN_ONLY_MESSAGE, capture, login_only, read_page
 from ..ledger import Ledger, RunOutcome
 from ..models import new_id, now
 from ..resolver import entity_view
@@ -162,6 +164,28 @@ SET_VERDICTS = _tool(
                        "reason": {"type": "string"}},
         "required": ["entity_id", "verdict", "reason"], "additionalProperties": False}}},
     ["verdicts"])
+SET_IDENTITIES = _tool(
+    "set_identities",
+    "Record who's who when results name several different people with the subject's name "
+    "(e.g. a dentist in Craiova, a footballer in Bucharest, a UK company director). One "
+    "entry per distinct person, with every entity that belongs to them; mark is_subject "
+    "on the one the subject profile matches, if any. Replaces the previous grouping. The "
+    "analyst picks the subject from these with one click, so make labels and "
+    "distinguishing details concrete.",
+    {"identities": {"type": "array", "maxItems": 20, "items": {
+        "type": "object",
+        "properties": {
+            "label": {"type": "string", "description": "name plus what they are, e.g. "
+                      "'Ion Popescu, dentist in Craiova'"},
+            "summary": {"type": "string", "description": "who this person is, from the "
+                        "sources (with finding ids)"},
+            "distinguishing": {"type": "string", "description": "what tells them apart: "
+                               "birth year, city, employer, photo, linked accounts"},
+            "entity_ids": {"type": "array", "items": {"type": "string"}},
+            "is_subject": {"type": "boolean"}},
+        "required": ["label", "entity_ids", "distinguishing"],
+        "additionalProperties": False}}},
+    ["identities"])
 SOCIAL_CAPTURE = _tool(
     "social_capture",
     "Open a social-media profile through a logged-in research persona on the Kali VM "
@@ -358,7 +382,8 @@ def verify_tools(investigation: dict, costly: str, platforms: list[str]) -> list
     lookups = [t for t in connector_tools(investigation, costly)
                if t["name"] in ("dork_search", "read_page")]
     return sorted([*lookups, *persona_tools(platforms), GET_ENTITY, GET_FINDING,
-                   LIST_FINDINGS, REVIEW_QUEUE, SET_VERDICTS], key=lambda t: t["name"])
+                   LIST_FINDINGS, REVIEW_QUEUE, SET_IDENTITIES, SET_VERDICTS],
+                  key=lambda t: t["name"])
 
 
 def reviewer_tools() -> list[dict]:
@@ -410,6 +435,7 @@ class ToolBox:
     report_ok: bool = False
     findings: list[str] = field(default_factory=list)
     verdicts: int = 0
+    identities: int = 0
     review: dict | None = None  # what submit_review received
 
     @property
@@ -714,12 +740,22 @@ class ToolBox:
                               else {}),
                            "text": chunk}, ensure_ascii=False)
 
+    async def _login_only(self, url: str, about: str | None) -> str:
+        """LinkedIn and other login-walled sites: a logged-in research persona, or no."""
+        ready = self.social.platforms_ready() if self.social is not None else []
+        if login_only(url) not in ready:
+            raise ToolError(LOGIN_ONLY_MESSAGE.format(platform=login_only(url).title()))
+        return await self._t_social_capture({"url": url, **({"entity_id": about}
+                                                              if about else {})})
+
     async def _t_read_page(self, args: dict) -> str:
         url = _str(args, "url", max_len=2000)
         about = _str(args, "entity_id", required=False, max_len=40)
         if about:
             row = self.db.get("entities", about)
             about = about if row and row["investigation_id"] == self.inv_id else None
+        if login_only(url):
+            return await self._login_only(url, about)
         self._spend()
         outcome = await read_page(self.ledger, self.investigation, url, user=self.user,
                                   run_by=self.run_id, entity_id=about)
@@ -743,6 +779,9 @@ class ToolBox:
         if about:
             row = self.db.get("entities", about)
             about = about if row and row["investigation_id"] == self.inv_id else None
+        if login_only(url):
+            # The persona capture is the evidence: it stores a screenshot too.
+            return await self._login_only(url, about)
         self._spend()
         outcome = await capture(self.ledger, self.investigation, url, user=self.user,
                                 run_by=self.run_id, entity_id=about)
@@ -788,6 +827,19 @@ class ToolBox:
             self.verdicts += 1
         left = review.queue(self.db, self.inv_id, limit=0)["total_pending"]
         return _dump({"recorded": dict(done), "errors": errors, "still_pending": left})
+
+    async def _t_set_identities(self, args: dict) -> str:
+        items = args.get("identities")
+        if not isinstance(items, list):
+            raise ToolError("identities must be a list")
+        clean = [i for i in items if isinstance(i, dict)]
+        n = identity.save_clusters(self.db, self.inv_id, clean, self.run_id)
+        self.identities = n
+        self.ledger.bus.publish(self.inv_id, "identity.updated", {"count": n})
+        dropped = len(items) - n
+        return _dump({"recorded": n, **({"dropped": f"{dropped} without a label or any "
+                                                    "entity of this investigation"}
+                                       if dropped else {})})
 
     # --- personas -------------------------------------------------------------------
 

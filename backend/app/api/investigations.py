@@ -7,21 +7,26 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from ..detect import DetectError, detect
+from connectors.base import ConnectorResult, EntityCandidate, EntityType, RelationshipCandidate
+
+from .. import identity
+from ..auth.context import Principal
+from ..auth.middleware import get_auth
+from ..auth.store import TenancyError
+from ..detect import DetectError, canonical_key, detect
 from ..events import sse_format
 from ..models import new_id, now
 from ..models.schemas import (
+    IdentityChoice,
     InvestigationCreate,
     InvestigationUpdate,
+    ProfileUpdate,
     ScanRequest,
     TargetCreate,
 )
 from ..platform import Platform
 from ..resolver import entity_view
 from ..retention import purge_investigation
-from ..auth.context import Principal
-from ..auth.middleware import get_auth
-from ..auth.store import TenancyError
 from .deps import current_user, get_platform, load_investigation, require_org
 
 router = APIRouter(tags=["investigations"])
@@ -102,6 +107,57 @@ async def delete_investigation(investigation_id: str, p: Platform = Depends(get_
 
 # --- targets & scans ---------------------------------------------------------
 
+def _insert_target(p: Platform, inv_id: str, value: str, etype: EntityType, key: str,
+                   user: str, profile: dict | None = None, via: str | None = None) -> dict:
+    entity_id = p.resolver.ensure_entity(inv_id, etype, key)
+    target = {"id": new_id("t"), "investigation_id": inv_id, "value": value,
+              "type": etype.value, "entity_id": entity_id, "added_by": user,
+              "created_at": now(), "profile": profile or {}}
+    p.db.insert("targets", target)
+    p.db.audit(user=user, action="target.add", investigation_id=inv_id, target=key,
+               detail={"type": etype.value, **({"via": via} if via else {})})
+    p.bus.publish(inv_id, "entity.created",
+                  {"entity": entity_view(p.db.get("entities", entity_id))})
+    return target
+
+
+def _apply_profile(p: Platform, inv: dict, person: dict, profile: dict, user: str) -> list[str]:
+    """Add the profile's known identifiers as targets of their own, tie them to
+    the person through a ``subject_profile`` finding (the brief, cited like any
+    source), and re-check screening hits against the profile. Returns the
+    entity ids of the identifiers that are new targets."""
+    inv_id = inv["id"]
+    existing = {(t["type"], t["entity_id"]) for t in p.db.query(
+        "SELECT type, entity_id FROM targets WHERE investigation_id = ?", (inv_id,))}
+    added, ents, rels = [], [], []
+    person_key = p.db.get("entities", person["entity_id"])["key"]
+    edge = {"Email": "uses_email", "Username": "has_username", "Phone": "has_phone"}
+    for value, etype_name in identity.identifiers(profile):
+        etype = EntityType(etype_name)
+        try:
+            key = canonical_key(etype, value)
+        except (DetectError, ValueError, UnicodeError):
+            continue
+        entity_id = p.resolver.ensure_entity(inv_id, etype, key)
+        if (etype.value, entity_id) not in existing:
+            _insert_target(p, inv_id, value, etype, key, user, via=f"profile of {person['value']}")
+            existing.add((etype.value, entity_id))
+            added.append(entity_id)
+        ents.append(EntityCandidate(etype, key))
+        rels.append(RelationshipCandidate(edge[etype.value], EntityType.PERSON, person_key,
+                                          etype, key, {"basis": "subject profile"}))
+    if rels:
+        result = ConnectorResult(source=identity.PROFILE_SOURCE, passive=True,
+                                 raw={"target": person["value"], "profile": profile},
+                                 entities=[EntityCandidate(EntityType.PERSON, person_key), *ents],
+                                 relationships=rels,
+                                 note="The analyst's brief: who the subject is.")
+        p.ledger.record(inv, identity.PROFILE_SOURCE, {"arg": person["value"]}, result,
+                        user=user, run_by="analyst", entity_id=person["entity_id"])
+    identity.screen_candidates(p.db, p.resolver, p.bus, inv_id, user=user)
+    return added
+
+
 @router.post("/investigations/{investigation_id}/targets", status_code=202)
 async def add_target(investigation_id: str, body: TargetCreate,
                      p: Platform = Depends(get_platform), user: str = Depends(current_user)):
@@ -110,20 +166,67 @@ async def add_target(investigation_id: str, body: TargetCreate,
         etype, key = detect(body.value, body.type)
     except DetectError as e:
         raise HTTPException(422, str(e)) from e
-    entity_id = p.resolver.ensure_entity(investigation_id, etype, key)
-    target_id = new_id("t")
-    p.db.insert("targets", {"id": target_id, "investigation_id": investigation_id,
-                            "value": body.value, "type": etype.value, "entity_id": entity_id,
-                            "added_by": user, "created_at": now()})
-    p.db.audit(user=user, action="target.add", investigation_id=investigation_id,
-               target=key, detail={"type": etype.value})
-    p.bus.publish(investigation_id, "entity.created",
-                  {"entity": entity_view(p.db.get("entities", entity_id))})
+    profile = identity.clean_profile(body.profile.model_dump()) if body.profile else {}
+    if profile and etype != EntityType.PERSON:
+        raise HTTPException(422, "a subject profile is for Person targets only")
+    target = _insert_target(p, investigation_id, body.value, etype, key, user, profile)
+    entity_id = target["entity_id"]
+    extra = _apply_profile(p, inv, target, profile, user) if profile else []
     run_id = None
     if body.scan:
-        run_id = p.scan.start(inv, [entity_id], user, max_depth=body.max_depth)
-    return {"target_id": target_id, "entity_id": entity_id, "type": etype.value,
-            "key": key, "run_id": run_id}
+        run_id = p.scan.start(inv, [entity_id, *extra], user, max_depth=body.max_depth)
+    return {"target_id": target["id"], "entity_id": entity_id, "type": etype.value,
+            "key": key, "run_id": run_id, "identifier_entity_ids": extra}
+
+
+@router.put("/investigations/{investigation_id}/targets/{target_id}/profile")
+async def set_profile(investigation_id: str, target_id: str, body: ProfileUpdate,
+                      p: Platform = Depends(get_platform), user: str = Depends(current_user)):
+    """Replace a Person target's subject profile. New identifiers become targets
+    (and are scanned); a new employer or city re-runs the name search with it."""
+    inv = load_investigation(p, investigation_id)
+    target = p.db.get("targets", target_id)
+    if target is None or target["investigation_id"] != investigation_id:
+        raise HTTPException(404, "target not found")
+    if target["type"] != EntityType.PERSON.value:
+        raise HTTPException(422, "a subject profile is for Person targets only")
+    before = target.get("profile") or {}
+    profile = identity.clean_profile(body.profile.model_dump())
+    p.db.update("targets", target_id, {"profile": profile})
+    p.db.audit(user=user, action="target.profile", investigation_id=investigation_id,
+               target=target["value"], detail={"profile": profile})
+    added = _apply_profile(p, inv, {**target, "profile": profile}, profile, user)
+    runs = []
+    if body.scan and added:
+        runs.append(p.scan.start(inv, added, user))
+    context = lambda x: (x.get("employers") or [])[:1] + (x.get("locations") or [])[:1]
+    if body.scan and context(profile) and context(profile) != context(before):
+        runs.append(p.scan.start(inv, [target["entity_id"]], user, max_depth=0,
+                                 only=["dork_search"], kind="pivot"))
+    return {"target": p.db.get("targets", target_id), "identifier_entity_ids": added,
+            "run_ids": runs, **identity.overview(p.db, investigation_id)}
+
+
+@router.get("/investigations/{investigation_id}/identity")
+async def get_identity(investigation_id: str, p: Platform = Depends(get_platform)):
+    """Who is the subject: profiles, the common-name warning, and the who's-who."""
+    load_investigation(p, investigation_id)
+    return identity.overview(p.db, investigation_id)
+
+
+@router.post("/identity-clusters/{cluster_id}/choose")
+async def choose_identity(cluster_id: str, body: IdentityChoice,
+                          p: Platform = Depends(get_platform),
+                          user: str = Depends(current_user)):
+    """The analyst picks which same-name person is the subject."""
+    row = p.db.get("identity_clusters", cluster_id)
+    if row is None:
+        raise HTTPException(404, "identity not found")
+    load_investigation(p, row["investigation_id"])
+    try:
+        return identity.choose(p.db, p.resolver, p.bus, cluster_id, body.reason, user)
+    except identity.IdentityError as e:
+        raise HTTPException(422, str(e)) from e
 
 
 @router.post("/investigations/{investigation_id}/scan", status_code=202)

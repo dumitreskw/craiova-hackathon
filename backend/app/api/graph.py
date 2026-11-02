@@ -32,7 +32,9 @@ async def graph(investigation_id: str, min_confidence: float = Query(0.0, ge=0, 
         wanted = [t.strip() for t in types.split(",") if t.strip()]
         sql += f" AND type IN ({','.join('?' * len(wanted))})"
         params += wanted
-    nodes = [entity_view(r) for r in p.db.query(sql, params)]
+    verdicts = review.verdicts(p.db, investigation_id)
+    nodes = [review.with_verdict(entity_view(r), verdicts.get(r["id"]))
+             for r in p.db.query(sql, params)]
     ids = {n["id"] for n in nodes}
     edges = [edge_view(r) for r in p.db.query(
         "SELECT * FROM edges WHERE investigation_id = ?", (investigation_id,))
@@ -60,7 +62,9 @@ async def get_entity(entity_id: str, p: Platform = Depends(get_platform)):
                        (entity_id,))
     reviews = p.db.query("SELECT verdict, reason, reviewer, by_agent, created_at FROM "
                          "entity_reviews WHERE entity_id = ? ORDER BY rowid", (entity_id,))
-    return {**entity_view(row), "attribute_sources": row["attributes"], "sources": sources,
+    latest = reviews[-1] if reviews else None
+    return {**review.with_verdict(entity_view(row), latest),
+            "attribute_sources": row["attributes"], "sources": sources,
             "edges": edges, "notes": notes, "reviews": reviews}
 
 

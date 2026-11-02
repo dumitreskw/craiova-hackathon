@@ -57,6 +57,22 @@ def latest(db: Database, entity_id: str) -> dict | None:
                   (entity_id,))
 
 
+def verdicts(db: Database, investigation_id: str) -> dict[str, dict]:
+    """The latest verdict per entity: ``{entity_id: {verdict, reason, by_agent, reviewer}}``."""
+    rows = db.query(
+        "SELECT r.entity_id, r.verdict, r.reason, r.by_agent, r.reviewer FROM entity_reviews r "
+        "WHERE r.investigation_id = ? AND r.rowid = "
+        "(SELECT max(rowid) FROM entity_reviews x WHERE x.entity_id = r.entity_id)",
+        (investigation_id,))
+    return {r.pop("entity_id"): r for r in rows}
+
+
+def with_verdict(view: dict, review: dict | None) -> dict:
+    """An entity view with its latest verdict, as the graph and the side list show it."""
+    return {**view, "verdict": review["verdict"] if review else None,
+            "verdict_reason": review["reason"] if review else None}
+
+
 def target_entity_ids(db: Database, investigation_id: str) -> set[str]:
     return {r["entity_id"] for r in db.query(
         "SELECT entity_id FROM targets WHERE investigation_id = ? AND entity_id IS NOT NULL",
@@ -96,7 +112,8 @@ def record(db: Database, resolver: Resolver, bus: EventBus, entity_id: str, verd
     db.audit(user=user, action=f"entity.{verdict}", investigation_id=inv_id, target=row["key"],
              detail={"entity_id": entity_id, "reason": reason, "previous_status": row["status"],
                      "by": reviewer if by_agent else "analyst"})
-    view = entity_view(db.get("entities", entity_id))
+    view = with_verdict(entity_view(db.get("entities", entity_id)),
+                        {"verdict": verdict, "reason": reason})
     bus.publish(inv_id, "entity.updated", {"entity": view})
     return view
 
