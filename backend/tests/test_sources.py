@@ -205,20 +205,34 @@ async def test_email_finders_link_people_to_the_domain_not_a_guessed_org():
 
 
 @respx.mock
-async def test_dehashed_keeps_breach_metadata_only():
+async def test_dehashed_extracts_pii_from_breach_records():
     respx.post("https://api.dehashed.com/v2/search").mock(return_value=httpx.Response(
         200, json={"total": 2, "balance": 97, "entries": [
             {"database_name": "ExampleLeak 2021", "email": ["jane@example.com"],
-             "password": ["hunter2"], "phone": ["+40700"], "address": ["Str. X 1"]},
+             "password": ["hunter2"], "phone": ["+40700"], "address": ["Str. X 1"],
+             "name": ["Jane Doe"]},
             {"database_name": "ExampleLeak 2021", "email": ["jane@example.com"],
              "hashed_password": ["$2y$10$abc"]}]}))
     r = await dehashed("jane@example.com")
     blob = json.dumps(r.to_dict())
-    for secret in ("hunter2", "$2y$10$abc", "+40700", "Str. X 1"):
-        assert secret not in blob
+    # PII values are now kept in the graph
+    assert "hunter2" in blob
+    assert "$2y$10$abc" in blob
+    assert "+40700" in blob
+    assert "str. x 1" in blob
+    assert "jane doe" in blob
     breach = next(e for e in r.entities if e.type == EntityType.BREACH)
-    assert breach.attributes["data_classes"] == ["address", "credential", "email", "phone"]
-    assert r.relationships[0].attributes["credential_exposed"] is True
+    assert breach.attributes["data_classes"] == ["address", "credential", "email", "name", "phone"]
+    breach_rel = next(rel for rel in r.relationships if rel.type == "appears_in_breach")
+    assert breach_rel.attributes["credential_exposed"] is True
+    assert "hunter2" in breach_rel.attributes["passwords"]
+    assert "$2y$10$abc" in breach_rel.attributes["hashed_passwords"]
+    phone = next(e for e in r.entities if e.type == EntityType.PHONE)
+    assert phone.key == "+40700"
+    loc = next(e for e in r.entities if e.type == EntityType.LOCATION)
+    assert loc.key == "str. x 1"
+    person = next(e for e in r.entities if e.type == EntityType.PERSON)
+    assert person.key == "jane doe"
 
 
 # --- command-line tools ------------------------------------------------------------------

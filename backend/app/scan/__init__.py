@@ -41,7 +41,7 @@ PIVOTS: dict[EntityType, list[str]] = {
                         "court_records", "news", "dork_search"],
     EntityType.EMAIL: ["gravatar", "holehe", "dehashed", "hibp", "email_rep", "dork_search"],
     EntityType.USERNAME: ["github_user", "maigret"],
-    EntityType.PHONE: ["phone_lookup", "hibp"],
+    EntityType.PHONE: ["phone_lookup", "hibp", "dehashed"],
 }
 
 # Which cost tiers a run may use: investigation setting "costly_connectors".

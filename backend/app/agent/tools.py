@@ -254,8 +254,9 @@ WORKERS: dict[str, dict] = {
                  "officers, owners and parent companies, status"},
     "breach_exposure": {
         "tools": ["hibp", "dehashed"],
-        "focus": "which breaches the target's email addresses appear in and what data "
-                 "classes were exposed (never passwords)"},
+        "focus": "which breaches the target's email addresses / phone numbers appear in, "
+                 "the data classes exposed, and the leaked PII (phones, addresses, names, "
+                 "credentials) per breach"},
     "legal_screening": {
         "tools": ["sanctions", "interpol", "europol", "national_wanted", "read_page"],
         "focus": "sanctions, PEP and wanted-list screening of the person or organisation "

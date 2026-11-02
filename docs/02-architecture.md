@@ -227,7 +227,7 @@ It owns the stopping condition and the per-run budget.
 | --- | --- | --- |
 | Recon | `dns`, `rdap`, `crtsh`, `http_probe`, `github` | infrastructure, subdomains, tech, emails |
 | Dorking | `dork_search` (Google/Bing/DuckDuckGo/Yandex) | where the target is named/mentioned |
-| Breach-exposure | `hibp`, `dehashed`, `intelx` (passive indexes) | which breaches an email/phone/username appears in — **metadata only, never plaintext passwords** |
+| Breach-exposure | `hibp`, `dehashed`, `intelx` (passive indexes) | which breaches an email/phone/username appears in and the PII exposed (DeHashed returns phones, addresses, names, credentials; HIBP returns metadata only) |
 | Legal / enforcement | `sanctions`, `interpol`, `europol`, `fbi_wanted`, `natl_wanted`, `court_records` | sanctions / PEP / wanted-notice / court hits — as **unverified candidates** pending disambiguation |
 
 (The diagram above shows three workers for space; the legal/enforcement worker

@@ -107,7 +107,7 @@ except entities verification rejected as not the subject.
 | `otx_domain` / `otx_ip` | AlienVault OTX passive DNS | Domain ↔ IP history | free (key) | finds subdomains CT logs miss |
 | `dnstwist` | permutation engine + public DNS | Domain → registered look-alikes (+MX = phishing risk) | free | seed-only, ~25 s |
 | `hunter` / `tomba` | Hunter.io / Tomba.io indexes | Domain → emails, names, roles, address pattern | metered (50 / 25 a month) | seed-only; their "organisation" field is unreliable, kept as a label only |
-| `dehashed` | DeHashed breach index | Email/username/domain → breach names + data classes | paid | seed-only; values (passwords, hashes, other PII) dropped before storage |
+| `dehashed` | DeHashed breach index | Email/username/domain/phone → breach names, data classes, and exposed PII (phones, addresses, names, passwords / hashes) | paid | seed-only; PII values kept as graph entities with breach provenance |
 | `holehe` | services' signup/recovery endpoints | Email → services it is registered on | free | seed-only |
 | `maigret` | top ~300 sites | Username → profiles | free | seed-only, ~30 s; search pages filtered out |
 | `anaf` | Romanian tax registry (ANAF API v9) | CUI → legal name, J number, CAEN, incorporation, addresses, VAT, inactive / struck off | free, no key | 0.3 s |

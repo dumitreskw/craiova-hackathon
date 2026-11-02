@@ -119,8 +119,9 @@ REGISTRY: dict[str, ConnectorSpec] = {
                       requires_key="TOMBA_API_KEY", cost="metered", quota=25, quota_days=30,
                       seed_only=True),
         ConnectorSpec("dehashed", dehashed, EntityType.EMAIL, True,
-                      "DeHashed: which breaches an email (or username / domain) appears in "
-                      "and which data classes leaked. Never returns passwords.",
+                      "DeHashed: which breaches an email (or username / domain / phone) appears "
+                      "in, the data classes leaked, and the exposed PII (phone numbers, addresses, "
+                      "names, passwords / hashes) per breach.",
                       requires_key="DEHASHED_API_KEY", cost="paid", seed_only=True),
         ConnectorSpec("holehe", holehe, EntityType.EMAIL, True,
                       "Which online services an email address is registered on (checks "
