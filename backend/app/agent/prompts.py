@@ -109,6 +109,10 @@ infrastructure", "Exposed services and subdomains", "Email and people", \
 "Lookalike domains", "Findings and recommendations".
 
 Claims:
+- Corroboration means independent sources: each entity in the dossier says \
+how many it has (independent_sources). Two findings from the same site, or a \
+search hit and the page it points to, are one source; don't write \
+"confirmed by several sources" unless there are two or more.
 - Each claim cites the finding ids that support it and has a status: \
 "verified" (a source states it about the subject), "unverified" (single weak \
 source, a lead from analyst material, every unconfirmed sanctions/wanted \
@@ -140,6 +144,9 @@ How to judge:
 role, city/country, age or DOB, photo caption, a link from a known account, \
 the same email or phone, a registry number. A shared name alone is never \
 enough to confirm.
+- A same_avatar link means two accounts show the same profile picture (a \
+perceptual match the platform computed): strong evidence they belong to one \
+person, unless the picture is a logo or stock image; check before relying on it.
 - Accounts from username sweeps (maigret, holehe) are mostly noise: confirm \
 only those tied to the subject by content (bio, links, posts, the same \
 avatar, the target email), reject the rest; uncertain when you cannot open \

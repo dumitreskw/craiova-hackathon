@@ -362,7 +362,7 @@ CREATE INDEX IF NOT EXISTS ix_social_jobs_status ON social_jobs(status, created_
 """
 
 JSON_COLUMNS = {"settings", "input", "attributes", "stats", "body", "detail",
-                "transcript", "digest", "result", "profile", "entity_ids"}
+                "transcript", "digest", "result", "profile", "entity_ids", "facts"}
 
 # Columns added after the first release: (table, column, DDL). Applied on open,
 # so an existing database file keeps working.
@@ -380,6 +380,9 @@ MIGRATIONS = [
     # Subject profile of a Person target: what the brief says about who they
     # are (app/identity.py), so namesakes can be told apart.
     ("targets", "profile", "TEXT NOT NULL DEFAULT '{}'"),
+    # What the verification agent established about each same-name person
+    # (birth year, places, employers); picking the subject adds it to the profile.
+    ("identity_clusters", "facts", "TEXT NOT NULL DEFAULT '{}'"),
 ]
 
 # Columns removed after a release: (table, column). Dropped on open, so an

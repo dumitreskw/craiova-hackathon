@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, urlparse
 from connectors.base import ConnectorResult, EntityCandidate, EntityType, RelationshipCandidate
 
 from . import guard
-from .evidence import LOGIN_ONLY_HOSTS, LOGIN_ONLY_MESSAGE, screenshot_dir
+from .evidence import LOGIN_ONLY_HOSTS, LOGIN_ONLY_MESSAGE, platform_name, screenshot_dir
 from .ledger import Ledger, RunOutcome
 from .models import new_id, now
 
@@ -147,7 +147,37 @@ class SocialHub:
             "queued": self.db.one("SELECT count(*) AS n FROM social_jobs "
                                   "WHERE status = 'queued'")["n"],
             "personas": self.personas(),
+            **self.health(),
         }
+
+    def health(self) -> dict[str, Any]:
+        """Per-platform persona counts and the alerts the UI shows. LinkedIn is
+        read only through personas, so it is always checked, personas or not."""
+        counts: dict[str, dict[str, int]] = {}
+        for r in self.db.query("SELECT platform, status, count(*) AS n FROM personas "
+                               "GROUP BY platform, status"):
+            c = counts.setdefault(r["platform"], {"ok": 0, "needs_login": 0, "disabled": 0})
+            c[r["status"]] = c.get(r["status"], 0) + r["n"]
+        alerts: list[dict[str, str]] = []
+        online = self.online()
+        for platform in sorted(set(LOGIN_ONLY_HOSTS.values()) | set(counts)):
+            c = counts.get(platform, {"ok": 0, "needs_login": 0, "disabled": 0})
+            name = platform_name(platform)
+            required = platform in set(LOGIN_ONLY_HOSTS.values())
+            if required and not online:
+                alerts.append({"platform": platform, "level": "error", "message":
+                               f"The Kali worker is offline: {name} pages can't be read."})
+            elif c["ok"] == 0 and (required or c["needs_login"]):
+                waiting = f" ({c['needs_login']} need login)" if c["needs_login"] else ""
+                alerts.append({"platform": platform, "level": "error" if required else "warn",
+                               "message": f"No logged-in {name} research account{waiting}: "
+                               + (f"{name} pages can't be read." if required else
+                                  "captures fall back to logged-out views.")})
+            elif required and c["ok"] == 1:
+                alerts.append({"platform": platform, "level": "warn", "message":
+                               f"Only one logged-in {name} account: nothing to fail over to "
+                               "if it gets logged out. Add a second one."})
+        return {"health": counts, "alerts": alerts}
 
     # --- personas -----------------------------------------------------------------
 
@@ -351,7 +381,7 @@ class SocialHub:
         mode = "auto"
         login_only = platform in set(LOGIN_ONLY_HOSTS.values())
         if login_only and persona == "none":
-            raise SocialError(LOGIN_ONLY_MESSAGE.format(platform=platform.title()))
+            raise SocialError(LOGIN_ONLY_MESSAGE.format(platform=platform_name(platform)))
         if persona == "none":
             persona, mode = None, "anonymous"
         elif persona:
@@ -370,8 +400,8 @@ class SocialHub:
             if login_only:
                 if persona is None:
                     raise SocialError(
-                        f"No logged-in {platform.title()} research account. "
-                        + LOGIN_ONLY_MESSAGE.format(platform=platform.title()))
+                        f"No logged-in {platform_name(platform)} research account. "
+                        + LOGIN_ONLY_MESSAGE.format(platform=platform_name(platform)))
                 mode = "persona"   # skip the anonymous attempt: it only sees the wall
         if persona:
             hour_ago = (datetime.now(UTC) - timedelta(hours=1)).isoformat(timespec="seconds")
@@ -387,13 +417,15 @@ class SocialHub:
 
     async def capture(self, investigation: dict, url: str, *, user: str, run_by: str,
                       persona: str | None = None, entity_id: str | None = None,
-                      watch_id: str | None = None, wait: bool = True) -> RunOutcome:
+                      watch_id: str | None = None, wait: bool = True,
+                      failover: bool = True) -> RunOutcome:
         """Capture a profile through the Kali worker.
 
         ``persona``: a persona name, ``"none"`` for logged-out only, or None to
         try logged out first and fall back to a healthy persona at a login wall.
         """
         inv_id = investigation["id"]
+        picked = persona is None    # the hub chose the persona, so it may choose another
         try:
             subject_id, persona, mode = self._prepare(investigation, url, persona, entity_id,
                                                       user, run_by)
@@ -416,7 +448,7 @@ class SocialHub:
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._waiters[job["id"]] = future
         try:
-            return await asyncio.wait_for(asyncio.shield(future), CAPTURE_TIMEOUT_S)
+            outcome = await asyncio.wait_for(asyncio.shield(future), CAPTURE_TIMEOUT_S)
         except TimeoutError:
             self._waiters.pop(job["id"], None)
             if self.db.get("social_jobs", job["id"])["status"] in ("queued", "running"):
@@ -424,6 +456,21 @@ class SocialHub:
                                                           "finished_at": now(),
                                                           "error": "timed out"})
             return RunOutcome(None, None, error="the Kali worker did not finish in time")
+        # Failover: the persona got logged out during this capture; retry once
+        # with another logged-in one of the same platform.
+        used = self.persona(persona) if persona else None
+        if failover and picked and used and used["status"] != "ok":
+            other = self._pick_persona(used["platform"])
+            if other and other["name"] != persona:
+                self.bus.publish(inv_id, "social.failover", {
+                    "url": url, "from": persona, "to": other["name"]})
+                self.db.audit(user=user, action=f"{CONNECTOR}.failover", investigation_id=inv_id,
+                              connector=CONNECTOR, target=url,
+                              detail={"from": persona, "to": other["name"]})
+                return await self.capture(investigation, url, user=user, run_by=run_by,
+                                          persona=other["name"], entity_id=entity_id,
+                                          watch_id=watch_id, failover=False)
+        return outcome
 
     async def wait(self, job_id: str, timeout: float = CAPTURE_TIMEOUT_S) -> RunOutcome:
         """Wait for a queued job (search, interactions) to finish; for agents."""
@@ -568,6 +615,7 @@ class SocialHub:
             self.db.update("findings", outcome.finding_id,
                            {"egress": _egress_label(body.get("egress"))
                             or self.ledger.settings.egress_label})
+            self.ledger.schedule_avatars(job["investigation_id"], outcome)
         if body.get("persona_used"):
             persona = self.persona(body["persona_used"])
             if persona:

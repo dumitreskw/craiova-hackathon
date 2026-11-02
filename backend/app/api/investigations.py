@@ -31,6 +31,10 @@ from .deps import current_user, get_platform, load_investigation, require_org
 
 router = APIRouter(tags=["investigations"])
 
+# Searches that take the profile's context (name + employer or city): re-run
+# when the profile gains one.
+CONTEXT_SEARCHES = ["dork_search", "news"]
+
 
 def _stats(p: Platform, inv_id: str) -> dict:
     count = lambda table: p.db.one(
@@ -199,10 +203,11 @@ async def set_profile(investigation_id: str, target_id: str, body: ProfileUpdate
     runs = []
     if body.scan and added:
         runs.append(p.scan.start(inv, added, user))
-    context = lambda x: (x.get("employers") or [])[:1] + (x.get("locations") or [])[:1]
-    if body.scan and context(profile) and context(profile) != context(before):
+    value = target["value"]
+    if body.scan and (identity.search_query(value, profile)
+                      != identity.search_query(value, before)):
         runs.append(p.scan.start(inv, [target["entity_id"]], user, max_depth=0,
-                                 only=["dork_search"], kind="pivot"))
+                                 only=CONTEXT_SEARCHES, kind="pivot"))
     return {"target": p.db.get("targets", target_id), "identifier_entity_ids": added,
             "run_ids": runs, **identity.overview(p.db, investigation_id)}
 
@@ -224,9 +229,14 @@ async def choose_identity(cluster_id: str, body: IdentityChoice,
         raise HTTPException(404, "identity not found")
     load_investigation(p, row["investigation_id"])
     try:
-        return identity.choose(p.db, p.resolver, p.bus, cluster_id, body.reason, user)
+        out = identity.choose(p.db, p.resolver, p.bus, cluster_id, body.reason, user)
     except identity.IdentityError as e:
         raise HTTPException(422, str(e)) from e
+    # Search again with what is now known about the subject.
+    inv = load_investigation(p, row["investigation_id"])
+    out["run_ids"] = [p.scan.start(inv, [eid], user, max_depth=0, only=CONTEXT_SEARCHES,
+                                   kind="pivot") for eid in out.pop("refresh", [])]
+    return out
 
 
 @router.post("/investigations/{investigation_id}/scan", status_code=202)

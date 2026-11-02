@@ -17,6 +17,9 @@ class InvestigationSettings(BaseModel):
     # Quick scan cost tiers: "none" (free only), "metered" (+ monthly-quota
     # sources like Hunter/Tomba), "all" (+ paid ones like DeHashed).
     costly_connectors: Literal["none", "metered", "all"] = "all"
+    # Start a small verification run after a scan when a person target has
+    # namesakes or list matches to sort out (app/platform.py).
+    auto_verify: bool = False
 
 
 _Terms = Field(default_factory=list, max_length=20)

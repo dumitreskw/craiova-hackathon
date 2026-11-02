@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Callable
 
+from . import identity, review
 from .agent import AgentRunner
-from .agent.catalog import build_model, is_anthropic, TASK_KEYS
+from .agent.catalog import TASK_KEYS, build_model, is_anthropic
 from .agent.model import AnthropicModel, ModelClient, configured, venice_configured
 from .config import Settings, load_settings
 from .events import EventBus
@@ -35,6 +36,39 @@ class Platform:
             model_resolver=None if model_factory else self._resolve_model)
         self.agents.model_factory_is_default = model_factory is None
         self.agents.social = self.social
+        self.scan.on_finished.append(self.auto_verify)
+
+    # --- automatic verification ------------------------------------------------------
+
+    AUTO_VERIFY_LOOKUPS = 12
+
+    def auto_verify(self, investigation: dict, run_id: str, status: str, user: str) -> str | None:
+        """After a scan: sort namesakes automatically when the investigation opted
+        in (settings.auto_verify) and a person target has several of them.
+        Returns the verify run id, or None when it didn't start."""
+        inv = self.db.get("investigations", investigation["id"]) or investigation
+        settings = inv.get("settings") or {}
+        if status != "finished" or not settings.get("auto_verify"):
+            return None
+        if not identity.needs_sorting(self.db, inv["id"]):
+            return None
+        if not review.queue(self.db, inv["id"], limit=0)["total_pending"]:
+            return None
+        if self.db.one("SELECT 1 AS x FROM agent_runs WHERE investigation_id = ? "
+                       "AND kind = 'verify' AND status = 'running'", (inv["id"],)):
+            return None
+        if self.agents.model_resolver is not None:
+            err = self.model_error(self.assigned_model("verify"))
+            if err:
+                self.bus.publish(inv["id"], "verify.skipped", {"reason": err, "scan": run_id})
+                return None
+        verify_run = self.agents.start(
+            inv, "verify", "Sort the people with the subject's name: who is the subject, who "
+            "is a namesake (automatic, after a scan).", user, self.AUTO_VERIFY_LOOKUPS,
+            settings.get("costly_connectors", "metered"))
+        self.db.audit(user=user, action="agent.verify.auto", investigation_id=inv["id"],
+                      detail={"scan": run_id, "run_id": verify_run})
+        return verify_run
 
     # --- model assignments (Models settings page) -------------------------------
 

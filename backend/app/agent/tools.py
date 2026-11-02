@@ -41,7 +41,7 @@ from .. import identity, review
 from .. import materials as mat
 from .. import report as rep
 from ..detect import DetectError, canonical_key, normalize_name
-from ..evidence import LOGIN_ONLY_MESSAGE, capture, login_only, read_page
+from ..evidence import LOGIN_ONLY_MESSAGE, capture, login_only, platform_name, read_page
 from ..ledger import Ledger, RunOutcome
 from ..models import new_id, now
 from ..resolver import entity_view
@@ -182,7 +182,19 @@ SET_IDENTITIES = _tool(
             "distinguishing": {"type": "string", "description": "what tells them apart: "
                                "birth year, city, employer, photo, linked accounts"},
             "entity_ids": {"type": "array", "items": {"type": "string"}},
-            "is_subject": {"type": "boolean"}},
+            "is_subject": {"type": "boolean"},
+            "facts": {"type": "object", "description": "what the sources establish about "
+                      "this person; when the analyst picks them as the subject these go into "
+                      "the subject profile and steer the next searches",
+                      "properties": {
+                          "birth_year": {"type": "integer"},
+                          "nationalities": {"type": "array", "items": {"type": "string"}},
+                          "locations": {"type": "array", "items": {"type": "string"},
+                                        "description": "cities"},
+                          "employers": {"type": "array", "items": {"type": "string"}},
+                          "roles": {"type": "array", "items": {"type": "string"}},
+                          "education": {"type": "array", "items": {"type": "string"}}},
+                      "additionalProperties": False}},
         "required": ["label", "entity_ids", "distinguishing"],
         "additionalProperties": False}}},
     ["identities"])
@@ -264,16 +276,19 @@ WORKERS: dict[str, dict] = {
         "focus": "the target's domains and hosting: registration, DNS, subdomains, "
                  "hosting history, look-alike domains, archived files"},
     "web_presence": {
-        "tools": ["dork_search", "read_page", "gravatar", "github_user", "wayback"],
+        "tools": ["dork_search", "news", "news_org", "read_page", "gravatar", "github_user",
+                  "wayback"],
         "focus": "where the target is named or described on the public web: official "
                  "pages, press, profiles; read the pages, don't rely on snippets"},
     "people_identity": {
         "tools": ["hunter", "tomba", "holehe", "maigret", "github_user", "gravatar",
-                  "dork_search", "read_page", "social_capture", "social_search"],
+                  "opencorporates", "dork_search", "read_page", "social_capture",
+                  "social_search"],
         "focus": "the people and accounts connected to the target: staff and roles, "
                  "email pattern, accounts tied to the target's emails and usernames"},
     "company_registry": {
-        "tools": ["anaf", "vies", "gleif", "companies_house", "dork_search", "read_page"],
+        "tools": ["anaf", "vies", "gleif", "companies_house", "opencorporates",
+                  "dork_search", "read_page"],
         "focus": "who the company legally is: registry records, identifiers, addresses, "
                  "officers, owners and parent companies, status"},
     "breach_exposure": {
@@ -282,9 +297,11 @@ WORKERS: dict[str, dict] = {
                  "the data classes exposed, and the leaked PII (phones, addresses, names, "
                  "credentials) per breach"},
     "legal_screening": {
-        "tools": ["sanctions", "interpol", "europol", "national_wanted", "read_page"],
-        "focus": "sanctions, PEP and wanted-list screening of the person or organisation "
-                 "targets; every name-only hit is an unverified possible match"},
+        "tools": ["sanctions", "interpol", "europol", "national_wanted", "court_records",
+                  "court_records_org", "read_page"],
+        "focus": "sanctions, PEP, wanted-list and Romanian court screening of the person or "
+                 "organisation targets; every name-only hit is an unverified possible match "
+                 "(a court case's city and the party's role are what tie it to the subject)"},
     # Synthesis only: reads the social_capture findings (no connectors). Enable the
     # findings-reading tools via reads_findings below.
     "social_profile": {
@@ -744,7 +761,7 @@ class ToolBox:
         """LinkedIn and other login-walled sites: a logged-in research persona, or no."""
         ready = self.social.platforms_ready() if self.social is not None else []
         if login_only(url) not in ready:
-            raise ToolError(LOGIN_ONLY_MESSAGE.format(platform=login_only(url).title()))
+            raise ToolError(LOGIN_ONLY_MESSAGE.format(platform=platform_name(login_only(url))))
         return await self._t_social_capture({"url": url, **({"entity_id": about}
                                                               if about else {})})
 

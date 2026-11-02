@@ -30,6 +30,13 @@ LOGIN_ONLY_MESSAGE = (
     "with social_capture) once a {platform} persona is logged in on the Kali worker.")
 
 
+PLATFORM_NAMES = {"linkedin": "LinkedIn", "x": "X", "tiktok": "TikTok", "youtube": "YouTube"}
+
+
+def platform_name(platform: str) -> str:
+    return PLATFORM_NAMES.get(platform, platform.title())
+
+
 def login_only(url: str) -> str | None:
     """The platform name if ``url`` is on a login-walled site, else ``None``."""
     host = (urlparse(url).hostname or "").lower()
@@ -50,7 +57,7 @@ async def fetch_page(ledger: Ledger, investigation: dict, connector: str, url: s
     if not _URL.match(url):
         return RunOutcome(None, None, error="not an http(s) URL", refused=True)
     if platform := login_only(url):
-        reason = LOGIN_ONLY_MESSAGE.format(platform=platform.title())
+        reason = LOGIN_ONLY_MESSAGE.format(platform=platform_name(platform))
         ledger.db.audit(user=user, action="connector.call", outcome="refused",
                         investigation_id=investigation["id"], connector=connector, target=url,
                         detail={"reason": reason, "run_by": run_by})
