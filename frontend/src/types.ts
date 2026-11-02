@@ -8,6 +8,24 @@ export interface InvestigationSettings {
   exclude_connectors: string[];
 }
 
+/** What the brief says about who a person target is (backend app/identity.py). */
+export interface SubjectProfile {
+  aliases?: string[];
+  birth_year?: number | null;
+  birth_date?: string | null;
+  nationalities?: string[];
+  locations?: string[];
+  employers?: string[];
+  roles?: string[];
+  education?: string[];
+  relatives?: string[];
+  emails?: string[];
+  usernames?: string[];
+  phones?: string[];
+  profile_urls?: string[];
+  notes?: string;
+}
+
 export interface Target {
   id: string;
   value: string;
@@ -15,6 +33,33 @@ export interface Target {
   entity_id: string;
   added_by: string;
   created_at: string;
+  profile?: SubjectProfile;
+}
+
+/** One distinct person among same-name results, grouped by the verification agent. */
+export interface IdentityCluster {
+  id: string;
+  label: string;
+  summary: string;
+  distinguishing: string;
+  entity_ids: string[];
+  is_subject: number | boolean;
+  chosen: number | boolean;
+  run_id: string | null;
+  created_at: string;
+}
+
+export interface IdentityOverview {
+  targets: {
+    target_id: string;
+    entity_id: string;
+    value: string;
+    profile: SubjectProfile;
+    namesakes: number;
+    list_matches: number;
+    common_name: boolean;
+  }[];
+  clusters: IdentityCluster[];
 }
 
 export interface Investigation {
@@ -44,6 +89,9 @@ export interface EntityView {
   status: EntityStatus;
   first_seen: string;
   last_seen: string;
+  /** The latest review verdict, if any (graph and entity endpoints). */
+  verdict?: Verdict | null;
+  verdict_reason?: string | null;
 }
 
 export interface EdgeView {

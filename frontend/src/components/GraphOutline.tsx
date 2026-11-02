@@ -195,7 +195,8 @@ function StatusChip({ e }: { e: EntityView }) {
   if (e.status === "confirmed" || e.status === "rejected" || e.status === "candidate") {
     return <Badge value={e.status} label={e.status === "candidate" ? "Unverified" : undefined} />;
   }
-  const verdict = e.attributes?.verdict ?? e.attributes?.review_verdict;
-  if (verdict === "uncertain") return <Badge value="uncertain" label="Uncertain" />;
+  if (e.verdict === "uncertain") {
+    return <Badge value="warning" label="Uncertain" title={e.verdict_reason ?? "Verification could not settle this"} />;
+  }
   return null;
 }

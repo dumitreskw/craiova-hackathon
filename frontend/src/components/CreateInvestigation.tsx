@@ -90,11 +90,10 @@ export function CreateInvestigation({ onCreated }: { onCreated: (inv: Investigat
           <label className="label" htmlFor="costly">Sources with quotas or fees in automatic scans</label>
           <select id="costly" className="field w-auto" value={costly}
             onChange={(e) => setCostly(e.target.value as "none" | "metered" | "all")}>
-            <option value="all">Everything: free, monthly quota (Hunter, Tomba) and paid (DeHashed)</option>
-            <option value="metered">Free and monthly-quota sources (Hunter, Tomba)</option>
+            <option value="all">Free and monthly-quota sources (Hunter, Tomba)</option>
             <option value="none">Free sources only</option>
           </select>
-          <p className="mt-1 text-xs text-muted">Quotas are shared by everyone on this server and enforced per month. <a className="text-accent-text hover:underline" href="#/sources">See what is left</a>.</p>
+          <p className="mt-1 text-xs text-muted">Quotas are shared by everyone on this server and enforced per month. Paid sources (DeHashed) never run in automatic scans; a Claude agent run uses them only when you allow paid tools for that run. <a className="text-accent-text hover:underline" href="#/sources">See what is left</a>.</p>
         </div>
 
         <ErrorBox error={error} onDismiss={() => setError(null)} />

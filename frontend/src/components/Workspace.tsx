@@ -4,7 +4,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { ENTITY_TYPES } from "../entityStyle";
-import { useInvestigationStream } from "../stream";
+import { useInvestigationStream, type InvestigationStream } from "../stream";
 import type { Investigation } from "../types";
 import { ActivityFeed } from "./ActivityFeed";
 import { AgentsPanel } from "./AgentsPanel";
@@ -15,6 +15,9 @@ import { MaterialsView } from "./MaterialsView";
 import { ReportsView } from "./ReportsView";
 import { RunsView } from "./RunsView";
 import { SocialView } from "./SocialView";
+import {
+  EMPTY_DRAFT, IdentityStrip, ProfileFields, draftIsEmpty, looksLikePerson, profileFrom, profileValid, type ProfileDraft,
+} from "./SubjectIdentity";
 import { Badge, ErrorBoundary, ErrorBox, Loading, useLoad } from "./ui";
 
 export const TABS = ["graph", "material", "social", "activity", "agents", "runs", "reports", "audit"] as const;
@@ -102,7 +105,7 @@ export function Workspace({ id, tab, onChanged }: { id: string; tab: Tab; onChan
           </span>
         </div>
         <p className="mt-1 max-w-[90ch] truncate text-sm text-muted" title={inv.purpose}>{inv.purpose}</p>
-        <TargetBar inv={inv} onAdded={() => { reload(); onChanged(); }} />
+        <TargetBar inv={inv} stream={stream} onAdded={() => { reload(); onChanged(); }} />
         <nav className="-mb-px mt-3 flex gap-1 overflow-x-auto" aria-label="Investigation views">
           {TABS.map((t) => {
             const [label, Icon] = TAB_META[t];
@@ -163,22 +166,28 @@ export function Workspace({ id, tab, onChanged }: { id: string; tab: Tab; onChan
   );
 }
 
-function TargetBar({ inv, onAdded }: { inv: Investigation; onAdded: () => void }) {
+function TargetBar({ inv, stream, onAdded }: { inv: Investigation; stream: InvestigationStream; onAdded: () => void }) {
   const [value, setValue] = useState("");
   const [type, setType] = useState("auto");
+  const [draft, setDraft] = useState<ProfileDraft>(EMPTY_DRAFT);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // A person target gets the profile form: what tells them apart from namesakes.
+  const person = type === "Person" || (type === "auto" && looksLikePerson(value));
 
   async function add(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const r = await api.post<{ type: string; key: string; run_id: string | null }>(
-        `/investigations/${inv.id}/targets`, { value: value.trim(), type, scan: true });
-      setNotice(`Added ${r.type} ${r.key}. Scanning.`);
+      const profile = person && !draftIsEmpty(draft) ? profileFrom(draft) : undefined;
+      const r = await api.post<{ type: string; key: string; run_id: string | null; identifier_entity_ids?: string[] }>(
+        `/investigations/${inv.id}/targets`, { value: value.trim(), type, scan: true, ...(profile ? { profile } : {}) });
+      const extra = r.identifier_entity_ids?.length ?? 0;
+      setNotice(`Added ${r.type} ${r.key}${extra ? ` and ${extra} known ${extra === 1 ? "identifier" : "identifiers"}` : ""}. Scanning.`);
       setValue("");
+      setDraft(EMPTY_DRAFT);
       onAdded();
     } catch (err) {
       setError(err);
@@ -218,7 +227,7 @@ function TargetBar({ inv, onAdded }: { inv: Investigation; onAdded: () => void }
               <option key={t} value={t}>{t}</option>
             ))}
           </select>
-          <button className="btn" disabled={busy || !value.trim()}>
+          <button className="btn" disabled={busy || !value.trim() || (person && !profileValid(draft))}>
             <Plus className="h-4 w-4" aria-hidden />{busy ? "Adding" : "Add and scan"}
           </button>
           {targets.length > 0 && (
@@ -228,7 +237,18 @@ function TargetBar({ inv, onAdded }: { inv: Investigation; onAdded: () => void }
           )}
         </div>
         {notice && !error && <span className="text-xs text-muted" role="status">{notice}</span>}
+        {person && value.trim() && (
+          <div className="basis-full">
+          <fieldset className="mt-1 max-w-3xl rounded-lg border border-line bg-raised/40 p-3">
+            <legend className="px-1 text-xs font-medium text-muted">
+              Who is {value.trim()}? Optional, but a common name needs at least one detail.
+            </legend>
+            <ProfileFields draft={draft} onChange={setDraft} idPrefix="new-target" />
+          </fieldset>
+          </div>
+        )}
       </form>
+      <IdentityStrip investigationId={inv.id} targets={targets} stream={stream} onSaved={onAdded} />
       {error ? <div className="mt-2"><ErrorBox error={error} onDismiss={() => setError(null)} /></div> : null}
     </div>
   );

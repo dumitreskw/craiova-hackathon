@@ -575,7 +575,10 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     const unsubscribe = stream.subscribe(({ event, data }) => {
       if (event === "entity.created" || event === "entity.updated") {
         const ent = data.entity as EntityView;
-        raw.current.nodes.set(ent.id, ent);
+        // Only review events carry the verdict; other updates keep the one we have.
+        const prev = raw.current.nodes.get(ent.id);
+        raw.current.nodes.set(ent.id, "verdict" in ent ? ent
+          : { ...ent, verdict: prev?.verdict ?? null, verdict_reason: prev?.verdict_reason ?? null });
       } else if (event === "edge.created") {
         const e = data.edge as EdgeView;
         if (raw.current.nodes.has(e.source) && raw.current.nodes.has(e.target)) {

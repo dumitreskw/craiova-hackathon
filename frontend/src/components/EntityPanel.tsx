@@ -16,7 +16,8 @@ const VERDICT_TEXT: Record<Verdict, string> = {
 /** The latest verdict on the entity, and who gave it. */
 function VerdictNote({ review }: { review?: EntityReview }) {
   if (!review) return null;
-  const who = review.by_agent ? "Claude" : review.reviewer;
+  const who = review.reviewer === "profile_check" ? "Profile check"
+    : review.by_agent ? "Claude" : review.reviewer;
   const tone = review.verdict === "confirmed" ? "border-ok/50 bg-ok/5"
     : review.verdict === "rejected" ? "border-line bg-raised/60" : "border-warn/60 bg-warn/10";
   const head = review.verdict === "uncertain"
