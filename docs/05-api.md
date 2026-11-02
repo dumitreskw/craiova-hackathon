@@ -34,7 +34,12 @@ DELETE /investigations/{id}            delete (soft) + purge evidence job
 ## Targets & runs
 
 ```text
-POST   /investigations/{id}/targets    add seed + start a quick scan
+POST   /investigations/{id}/targets    add seed + start a quick scan {value, type, profile?}
+PUT    /investigations/{id}/targets/{tid}/profile  replace a Person target's subject profile
+                                       {profile, scan}; new identifiers become targets
+GET    /investigations/{id}/identity   profiles, namesake / list-match counts, common-name
+                                       warning, who's-who clusters
+POST   /identity-clusters/{cid}/choose the analyst picks the subject {reason}
 POST   /investigations/{id}/collect    start the collection agent {goal, target?, max_tool_calls}
 POST   /investigations/{id}/report-agent  report pipeline: verify -> write -> fact-check
                                        {goal, max_tool_calls, verify=true, review=true}
@@ -58,7 +63,15 @@ POST   /entities/{eid}/pivot           run selected connectors on an entity
 
 // 202 Accepted
 { "target_id": "t_1", "entity_id": "e_dom_1", "connectors_started": 9 }
+
+// A person, with what tells them apart from namesakes (all fields optional)
+{ "value": "Ion Popescu", "type": "Person",
+  "profile": { "birth_year": 1985, "nationalities": ["Romanian"], "locations": ["Craiova"],
+               "employers": ["Example SRL"], "emails": ["ion@example.com"], "usernames": ["ionp"] } }
 ```
+
+Graph nodes and `GET /entities/{eid}` carry `verdict` / `verdict_reason`: the
+latest review (confirmed, rejected, uncertain) or `null`.
 
 ```json
 // POST /investigations/{id}/collect

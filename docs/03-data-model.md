@@ -99,6 +99,34 @@ confidence = 1 - Π (1 - reliability(source_i) * match_quality_i)
    shared strong attribute (email, phone, employer, location). These are
    proposed as `same_as` edges and are **never auto-merged**. The analyst
    decides.
+4. **No name-only person merges**: a Person a connector returns merges into
+   an existing same-name Person (names compared without diacritics, case or
+   word order) only when it is linked through something that person already
+   has: an email, username or phone, its company (a profile employer, or an
+   organisation it is tied to), the entity the lookup ran on, or, for a
+   target, the investigation's other targets. Otherwise it is a separate
+   `namesake` node (`key = "<name> @ <what it came with>"`) tied to the
+   same-name person by a `possible_match` edge (`backend/app/resolver`).
+
+## Subject profile and who's who
+
+A Person target carries a `profile` (birth year, nationalities, places,
+employers, known emails / usernames / phones; `backend/app/identity.py`):
+
+- known identifiers become targets of their own, tied to the person by a
+  `subject_profile` finding (reliability 0.7, the analyst's brief);
+- the scan searches the name with the employer or city, not the bare name;
+- a sanctions / wanted-list match whose birth year or nationality
+  contradicts the profile is rejected automatically (reviewer
+  `profile_check`, reason recorded); an analyst can override it, and
+  confirming a match stays a human decision;
+- every agent brief, the report dossier and the fact-checker see it.
+
+`IdentityCluster { id, investigation_id, label, summary, distinguishing,
+entity_ids, is_subject, chosen }`: the verification agent groups same-name
+results into distinct people (`set_identities`); the analyst picks the subject
+(`POST /identity-clusters/{id}/choose`), which confirms that person's entities
+and rejects the others' (screening hits keep their own review).
 
 ## Investigation-level objects
 

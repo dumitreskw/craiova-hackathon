@@ -101,8 +101,8 @@ its internal CA; accept the certificate warning) and register
 Each connector skips cleanly when its key is missing (`GET /api/v1/connectors`
 shows what is available and how much of each monthly quota is used). Metered
 sources (Hunter 50/month, Tomba 25/month) are enforced by the ledger across
-all investigations; paid ones (DeHashed) only run when an investigation or an
-agent run opts into `costly_connectors: "all"`.
+all investigations; paid ones (DeHashed) never run in the quick scan, only in
+agent runs that opt into `costly_connectors: "all"`.
 
 For local development without the tools installed, `OSINT_KALI_SSH=kali` in
 `backend/.env` runs subfinder, dnstwist, holehe and maigret on the Kali VM
