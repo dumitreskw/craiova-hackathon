@@ -1,20 +1,24 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import Graph from "graphology";
 import Sigma from "sigma";
 import type { NodeDisplayData, EdgeDisplayData, PartialButFor } from "sigma/types";
 import type { Settings } from "sigma/settings";
 import FA2Layout from "graphology-layout-forceatlas2/worker";
 import { inferSettings } from "graphology-layout-forceatlas2";
+import { animateNodes } from "sigma/utils";
 import { createEdgeCurveProgram } from "@sigma/edge-curve";
 import {
-  Filter, Fullscreen, Layers, Minus, Pause, Play, Plus, Search, SlidersHorizontal, Workflow, X,
+  ChevronRight, Crosshair, Expand, Filter, Fullscreen, Layers, ListTree, Minus, Network, Pause, Play, Plus, Search,
+  Shrink, SlidersHorizontal, Workflow, X,
 } from "lucide-react";
 import { api } from "../api";
 import { DEFAULT_HIDDEN, typeColor } from "../entityStyle";
-import { clusterId, computeView, plural, type Filters, type View, type ViewNode } from "../graph/model";
+import { clusterId, computeView, passes, plural, type Filters, type View, type ViewNode } from "../graph/model";
+import { focusSubset, layoutBBox, radialLayout, type RadialLayout } from "../graph/focus";
 import type { InvestigationStream } from "../stream";
 import type { EdgeView, EntityView, Graph as GraphData } from "../types";
-import { ErrorBox, Spinner } from "./ui";
+import { GraphOutline, namesakeIds } from "./GraphOutline";
+import { ErrorBox, Segmented, Spinner } from "./ui";
 
 interface NodeAttrs {
   x: number;
@@ -50,6 +54,23 @@ type Point = { x: number; y: number };
 // Survive tab switches: reopening the graph shows the same picture at once.
 const positionCache = new Map<string, Map<string, Point>>();
 const expandedCache = new Map<string, Set<string>>();
+// Focus mode state per investigation: the breadcrumb trail and opened nodes.
+const focusCache = new Map<string, { mode: Mode; trail: string[]; opened: string[] }>();
+// In focus mode, labels are always drawn while the canvas holds at most this many nodes.
+const FOCUS_LABELS_MAX = 70;
+const TRAIL_MAX = 8;
+
+type Mode = "focus" | "full";
+
+function outlineDefault(): boolean {
+  try {
+    const v = window.localStorage.getItem("graph.outline");
+    if (v !== null) return v === "1";
+  } catch {
+    /* storage unavailable */
+  }
+  return window.matchMedia("(min-width: 1280px)").matches;
+}
 
 interface Palette {
   ink: string;
@@ -196,6 +217,17 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [legendOpen, setLegendOpen] = useState(true);
   const [shown, setShown] = useState({ nodes: 0, groups: 0 });
+  const cachedFocus = focusCache.get(investigationId);
+  const [mode, setMode] = useState<Mode>(cachedFocus?.mode ?? "focus");
+  const [trail, setTrail] = useState<string[]>(cachedFocus?.trail ?? []);
+  const [opened, setOpened] = useState<Set<string>>(() => new Set(cachedFocus?.opened ?? []));
+  const [outlineOpen, setOutlineOpen] = useState(outlineDefault);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const fitNext = useRef(true);
+  const cancelAnim = useRef<(() => void) | null>(null);
+  const prevMode = useRef(mode);
+  const actions = useRef<{ expand: (id: string) => void }>({ expand: () => undefined });
 
   const seedKey = seedIds.join(",");
   const seeds = useMemo(() => new Set(seedIds), [seedKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -226,6 +258,7 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
       edgeProgramClasses: { curve: createEdgeCurveProgram<NodeAttrs, EdgeAttrs>() },
       nodeReducer: (node, data) => {
         const res: Partial<NodeDisplayData> = { ...data };
+        if (modeRef.current === "focus" && graph.order <= FOCUS_LABELS_MAX) res.forceLabel = true;
         const hov = hoverRef.current;
         if (hov.node) {
           if (node === hov.node || hov.neighbors.has(node)) {
@@ -277,6 +310,19 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
       }
     });
     renderer.on("clickStage", () => onSelectRef.current(null));
+    // Double-click opens a node in focus mode (its neighbours join the canvas)
+    // instead of zooming in.
+    renderer.on("doubleClickNode", (e) => {
+      if (modeRef.current !== "focus") return;
+      e.preventSigmaDefault();
+      if (!graph.getNodeAttribute(e.node, "count")) actions.current.expand(e.node);
+    });
+    // The side list opening and closing resizes the canvas.
+    const ro = new ResizeObserver(() => {
+      renderer.resize();
+      renderer.refresh();
+    });
+    ro.observe(container);
 
     // Marks WebGL can't draw cheaply: dashed rings on unverified matches,
     // target rings, group counts and the selection ring. There are few of these.
@@ -457,6 +503,8 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     return () => {
       if (frame) window.cancelAnimationFrame(frame);
       mo.disconnect();
+      ro.disconnect();
+      cancelAnim.current?.();
       mq.removeEventListener("change", onTheme);
       savePositions();
       if (layoutTimer.current) window.clearTimeout(layoutTimer.current);
@@ -467,7 +515,8 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function savePositions() {
+  function savePositions(force = false) {
+    if (!force && modeRef.current !== "full") return; // radial positions are recomputed, not kept
     const g = graphRef.current;
     let cache = positionCache.get(investigationId);
     if (!cache) positionCache.set(investigationId, (cache = new Map()));
@@ -552,17 +601,93 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     for (const id of seedIds) if (!raw.current.nodes.has(id)) fetchNode(id);
   }, [ready, seedKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---- focus ---------------------------------------------------------------
+  /** What the focus view is centred on: the last crumb, else the targets. */
+  function focusRoots(): string[] {
+    if (trail.length) return [trail[trail.length - 1]];
+    const present = seedIds.filter((id) => raw.current.nodes.has(id));
+    if (present.length) return present;
+    // No target in the graph: the best-connected entity.
+    const deg = new Map<string, number>();
+    for (const e of raw.current.edges.values()) {
+      deg.set(e.source, (deg.get(e.source) || 0) + 1);
+      deg.set(e.target, (deg.get(e.target) || 0) + 1);
+    }
+    let best: string | null = null;
+    for (const [id, d] of deg) if (best === null || d > (deg.get(best) || 0)) best = id;
+    if (best) return [best];
+    const first = raw.current.nodes.keys().next();
+    return first.done ? [] : [first.value];
+  }
+
+  /** Centre the focus view on an entity; the trail keeps the way back. */
+  function refocus(id: string) {
+    setTrail((prev) => {
+      const i = prev.indexOf(id);
+      if (i >= 0) return prev.slice(0, i + 1);
+      if (seeds.has(id) && seeds.size === 1) return [];
+      const next = [...prev, id];
+      return next.length > TRAIL_MAX ? next.slice(next.length - TRAIL_MAX) : next;
+    });
+    setOpened(new Set());
+    fitNext.current = true;
+  }
+
+  /** Step back along the trail; -1 is the targets. */
+  function goBackTo(index: number) {
+    setTrail((prev) => prev.slice(0, index + 1));
+    setOpened(new Set());
+    fitNext.current = true;
+  }
+
+  function toggleOpen(id: string) {
+    if (focusRoots().includes(id)) return;
+    setOpened((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    fitNext.current = true;
+  }
+  actions.current.expand = toggleOpen;
+
   // ---- view sync ----------------------------------------------------------
   useEffect(() => {
     if (!ready) return;
     const filters: Filters = { hidden, minConfidence, showCandidates, showRejected };
-    const view = computeView(raw.current.nodes, raw.current.edges, filters, seeds, expanded);
+    const inFocus = mode === "focus";
+    if (prevMode.current !== mode) {
+      // Switching modes: start from a clean canvas so neither layout inherits
+      // the other's positions.
+      if (prevMode.current === "full") savePositions(true);
+      prevMode.current = mode;
+      if (layoutTimer.current) window.clearTimeout(layoutTimer.current);
+      layoutRef.current?.kill();
+      layoutRef.current = null;
+      setArranging(false);
+      cancelAnim.current?.();
+      graphRef.current.clear();
+      sigmaRef.current?.setCustomBBox(null);
+      firstSync.current = true;
+      fitNext.current = true;
+    }
+    const roots = inFocus ? focusRoots() : [];
+    const source = inFocus
+      ? focusSubset(raw.current.nodes, raw.current.edges, filters, seeds, roots, opened)
+      : raw.current.nodes;
+    const view = computeView(source, raw.current.edges, filters, seeds, expanded);
     viewRef.current = view;
-    const changed = syncGraph(view);
+    const layout = inFocus ? radialLayout(view, roots) : null;
+    const changed = syncGraph(view, layout);
     expandedCache.set(investigationId, expanded);
+    focusCache.set(investigationId, { mode, trail, opened: [...opened] });
     setShown({ nodes: view.nodes.size - view.clusters.size, groups: view.clusters.size });
     const renderer = sigmaRef.current;
-    if (firstSync.current) {
+    if (layout) {
+      firstSync.current = false;
+      arrangeFocus(layout);
+    } else if (firstSync.current) {
       firstSync.current = false;
       const cached = positionCache.get(investigationId);
       // Cached positions are already arranged: only settle what is new.
@@ -577,10 +702,40 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
       focusAfterSync.current = null;
       window.setTimeout(() => focusNode(focus), 60);
     }
-  }, [ready, version, hidden, minConfidence, showCandidates, showRejected, expanded, seeds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ready, version, hidden, minConfidence, showCandidates, showRejected, expanded, seeds, mode, trail, opened]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Move the focus view's nodes to their radial places and keep it framed. */
+  function arrangeFocus(layout: RadialLayout) {
+    const renderer = sigmaRef.current;
+    const g = graphRef.current;
+    if (!renderer) return;
+    const targets: Record<string, { x: number; y: number }> = {};
+    let moved = false;
+    for (const [id, p] of layout.pos) {
+      if (!g.hasNode(id)) continue;
+      targets[id] = p;
+      const a = g.getNodeAttributes(id);
+      if (Math.abs(a.x - p.x) > 0.01 || Math.abs(a.y - p.y) > 0.01) moved = true;
+    }
+    renderer.setCustomBBox(layoutBBox(layout.pos));
+    const fit = fitNext.current;
+    fitNext.current = false;
+    cancelAnim.current?.();
+    const done = () => {
+      cancelAnim.current = null;
+      if (fit) renderer.getCamera().animatedReset({ duration: 350 });
+    };
+    if (moved && !reduceMotionNow()) {
+      cancelAnim.current = animateNodes(g, targets, { duration: 450, easing: "quadraticInOut" }, done);
+    } else {
+      for (const [id, p] of Object.entries(targets)) g.mergeNodeAttributes(id, p);
+      renderer.refresh();
+      done();
+    }
+  }
 
   /** Bring the graphology graph in line with the view; returns how many items changed. */
-  function syncGraph(view: View): number {
+  function syncGraph(view: View, layout: RadialLayout | null = null): number {
     const g = graphRef.current;
     const pal = palette.current;
     let cache = positionCache.get(investigationId);
@@ -590,7 +745,7 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     const dropNodes: string[] = [];
     g.forEachNode((id, a) => {
       if (!view.nodes.has(id)) {
-        cache!.set(id, { x: a.x, y: a.y });
+        if (!layout) cache!.set(id, { x: a.x, y: a.y });
         dropNodes.push(id);
       }
     });
@@ -622,7 +777,25 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     };
 
     let todo: string[] = [];
-    for (const [id, n] of view.nodes) {
+    if (layout) {
+      // New nodes start where they hang off (their parent's current place) and
+      // grow outwards to their ring; arrangeFocus animates them there.
+      const order = [...view.nodes.keys()].sort((a, b) => (layout.depth.get(a) ?? 0) - (layout.depth.get(b) ?? 0));
+      for (const id of order) {
+        const attrs = nodeAttrs(view.nodes.get(id)!, 1.3);
+        if (g.hasNode(id)) {
+          g.mergeNodeAttributes(id, attrs);
+          continue;
+        }
+        const par = layout.parent.get(id);
+        const from = par && g.hasNode(par)
+          ? { x: g.getNodeAttribute(par, "x"), y: g.getNodeAttribute(par, "y") }
+          : layout.pos.get(id) ?? { x: 0, y: 0 };
+        g.addNode(id, { ...attrs, x: from.x, y: from.y });
+        changed++;
+      }
+    }
+    for (const [id, n] of layout ? [] : view.nodes) {
       const attrs = nodeAttrs(n);
       if (g.hasNode(id)) {
         g.mergeNodeAttributes(id, attrs);
@@ -720,6 +893,7 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     if (!r || !graphRef.current.hasNode(id)) return;
     const d = r.getNodeDisplayData(id);
     if (!d) return;
+    if (modeRef.current === "focus") return; // the focus view is already framed
     const cam = r.getCamera();
     cam.animate({ x: d.x, y: d.y, ratio: Math.min(cam.ratio, 0.35) }, { duration: 450 });
   }
@@ -736,10 +910,16 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
       return;
     }
     if (graphRef.current.hasNode(selected)) focusNode(selected);
-    else focusAfterSync.current = selected;
+    else if (mode === "focus" && raw.current.nodes.has(selected)) {
+      // Picked somewhere else (entity links, activity feed) and not on the
+      // canvas: centre the focus view on it.
+      revealFilters(raw.current.nodes.get(selected)!);
+      refocus(selected);
+    } else focusAfterSync.current = selected;
   }, [selected, ready]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function reveal(ent: EntityView) {
+  /** Loosen the filters just enough for this entity to show. */
+  function revealFilters(ent: EntityView) {
     if (hidden.has(ent.type)) setHidden((prev) => {
       const next = new Set(prev);
       next.delete(ent.type);
@@ -748,6 +928,12 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
     if (ent.status === "candidate") setShowCandidates(true);
     if (ent.status === "rejected") setShowRejected(true);
     if (ent.confidence < minConfidence) setMinConfidence(0);
+  }
+
+  /** Search and the side list: select the entity and, in focus mode, centre on it. */
+  function reveal(ent: EntityView) {
+    revealFilters(ent);
+    if (mode === "focus") refocus(ent.id);
     focusAfterSync.current = ent.id;
     onSelect(ent.id);
   }
@@ -785,13 +971,50 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
 
   const filtersActive = minConfidence > 0 || !showCandidates || showRejected;
 
-  return (
-    <div className="graph-surface absolute inset-0 overflow-hidden">
-      <div ref={containerRef} className="absolute inset-0" role="img"
-        aria-label={`Entity graph: ${shown.nodes} entities and ${shown.groups} groups shown. Use the search box to find one; details open in the side panel.`} />
+  // The side list: what passes the filters, wherever it sits on the canvas.
+  const listed = useMemo(() => {
+    const f: Filters = { hidden, minConfidence, showCandidates, showRejected };
+    return [...raw.current.nodes.values()].filter((e) => passes(e, f, seeds));
+  }, [version, hidden, minConfidence, showCandidates, showRejected, seeds]);
+  const namesakes = useMemo(() => namesakeIds(raw.current.nodes, raw.current.edges, seeds), [version, seeds]);
 
-      {/* top-left: find and filter */}
-      <div className="absolute left-3 top-3 z-10 flex max-w-[calc(100%-200px)] items-start gap-2">
+  function setOutline(open: boolean) {
+    setOutlineOpen(open);
+    try {
+      window.localStorage.setItem("graph.outline", open ? "1" : "0");
+    } catch {
+      /* storage unavailable */
+    }
+  }
+
+  const labelOf = (id: string) => {
+    const e = raw.current.nodes.get(id);
+    return e ? e.label || e.key : id;
+  };
+  const roots = mode === "focus" && ready ? focusRoots() : [];
+  const onCanvas = !!selected && !!viewRef.current?.nodes.has(selected);
+  const canExpand = mode === "focus" && onCanvas && !!selected && !roots.includes(selected)
+    && !(viewRef.current?.nodes.get(selected!)?.count);
+  const subjectTitle = seedIds.filter((id) => raw.current.nodes.has(id)).map(labelOf).join(", ");
+
+  return (
+    <div className="absolute inset-0 flex">
+      {outlineOpen && ready && (
+        <GraphOutline entities={listed} namesakes={namesakes} seeds={seeds} selected={selected}
+          onPick={reveal} onClose={() => setOutline(false)} />
+      )}
+    <div className="graph-surface relative min-w-0 flex-1 overflow-hidden">
+      <div ref={containerRef} className="absolute inset-0" role="img"
+        aria-label={`Entity graph: ${shown.nodes} entities and ${shown.groups} groups shown. Use the search box or the entity list to find one; details open in the side panel.`} />
+
+      {/* top-left: list, find, filter and view mode */}
+      <div className="absolute left-3 top-3 z-20 flex max-w-[calc(100%-80px)] flex-wrap items-start gap-2">
+        {!outlineOpen && (
+          <button className="btn h-10 gap-2 shadow-float" onClick={() => setOutline(true)}
+            aria-label="Show the entity list" title="Entities by category">
+            <ListTree className="h-4 w-4" aria-hidden /><span className="max-sm:hidden">List</span>
+          </button>
+        )}
         <GraphSearch nodes={raw.current.nodes} version={version} onPick={reveal} />
         <div className="relative">
           <button className={`btn h-10 gap-2 shadow-float ${filtersActive ? "border-accent/70" : ""}`}
@@ -826,7 +1049,49 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
             </div>
           )}
         </div>
+        <div className="floating flex h-10 items-center px-1">
+          <Segmented label="Graph view" value={mode} onChange={(m) => setMode(m)} options={[
+            ["focus", <><Crosshair className="h-3.5 w-3.5" aria-hidden />Focus</>,
+              "The focus entity and its direct links; double-click a node to expand it"],
+            ["full", <><Network className="h-3.5 w-3.5" aria-hidden />Full graph</>, "Everything at once"],
+          ] as const} />
+        </div>
       </div>
+
+      {/* focus trail: where the view is centred, and the way back */}
+      {mode === "focus" && ready && counts.total > 0 && (
+        <nav aria-label="Focus trail"
+          className="floating absolute left-3 top-[64px] z-10 flex max-w-[calc(100%-80px)] flex-wrap items-center gap-1 px-2 py-1 text-[13px]">
+          <button onClick={() => goBackTo(-1)} title={subjectTitle || "The investigation's targets"}
+            aria-current={trail.length === 0 ? "location" : undefined}
+            className={`rounded px-1.5 py-0.5 hover:bg-raised ${trail.length === 0 ? "font-semibold text-ink" : "text-muted"}`}>
+            Subject
+          </button>
+          {trail.map((id, i) => (
+            <Fragment key={id}>
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden />
+              <button onClick={() => goBackTo(i)} aria-current={i === trail.length - 1 ? "location" : undefined}
+                className={`max-w-[14rem] truncate rounded px-1.5 py-0.5 hover:bg-raised ${
+                  i === trail.length - 1 ? "font-semibold text-ink" : "text-muted"}`}>
+                {labelOf(id)}
+              </button>
+            </Fragment>
+          ))}
+          {canExpand && selected && (
+            <span className="ml-1 flex items-center gap-1 border-l border-line pl-2">
+              <button className="btn btn-sm" onClick={() => toggleOpen(selected)}
+                title={opened.has(selected) ? "Hide this node's neighbours" : "Show this node's neighbours (or double-click it)"}>
+                {opened.has(selected)
+                  ? <><Shrink className="h-3.5 w-3.5" aria-hidden />Collapse</>
+                  : <><Expand className="h-3.5 w-3.5" aria-hidden />Expand</>}
+              </button>
+              <button className="btn btn-sm" onClick={() => refocus(selected)} title="Centre the view on this node">
+                <Crosshair className="h-3.5 w-3.5" aria-hidden />Focus here
+              </button>
+            </span>
+          )}
+        </nav>
+      )}
 
       {/* top-right: camera and layout */}
       <div className="floating absolute right-3 top-3 z-10 flex flex-col p-1" role="toolbar" aria-label="Graph view">
@@ -835,7 +1100,7 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
         <button className="icon-btn" onClick={() => sigmaRef.current?.getCamera().animatedReset({ duration: 300 })}
           aria-label="Fit graph to screen" title="Fit to screen"><Fullscreen className="h-4 w-4" /></button>
         <div className="mx-1.5 my-1 border-t border-line" />
-        {arranging ? (
+        {mode === "focus" ? null : arranging ? (
           <button className="icon-btn text-accent-text" onClick={stopLayout} aria-label="Stop arranging" title="Stop arranging">
             <Pause className="h-4 w-4" />
           </button>
@@ -897,6 +1162,7 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
       {ready && (
         <div className="floating absolute bottom-3 right-3 z-10 flex items-center gap-3 px-3 py-2 text-xs text-muted">
           {arranging && <span className="flex items-center gap-1.5 text-accent-text"><Workflow className="h-3.5 w-3.5" aria-hidden />Arranging</span>}
+          {mode === "focus" && <span className="max-md:hidden">Double-click a node to expand it</span>}
           <span>
             <span className="font-medium text-ink">{shown.nodes.toLocaleString()}</span> of {counts.total.toLocaleString()} entities
             {shown.groups > 0 && <>, {shown.groups} groups</>}
@@ -921,10 +1187,11 @@ export function GraphView({ investigationId, seedIds, stream, selected, onSelect
         </div>
       )}
     </div>
+    </div>
   );
 }
 
-function nodeAttrs(n: ViewNode): Omit<NodeAttrs, "x" | "y"> {
+function nodeAttrs(n: ViewNode, scale = 1): Omit<NodeAttrs, "x" | "y"> {
   const base = typeColor(n.etype);
   let size: number;
   if (n.count) size = Math.min(24, 8 + Math.log2(n.count) * 2.4);
@@ -933,7 +1200,7 @@ function nodeAttrs(n: ViewNode): Omit<NodeAttrs, "x" | "y"> {
     if (n.seed) size = Math.max(size, 11);
   }
   return {
-    size,
+    size: size * scale,
     color: n.status === "rejected" ? withAlpha(base, 0.35) : base,
     label: n.label,
     etype: n.etype,
@@ -961,6 +1228,10 @@ function hash01(id: string): number {
 function edgeCurvature(id: string): number {
   const u = hash01(id);
   return (u < 0.5 ? -1 : 1) * (0.12 + Math.abs(u - 0.5) * 0.36);
+}
+
+function reduceMotionNow(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function withAlphaRgb(rgb: string, a: number): string {
