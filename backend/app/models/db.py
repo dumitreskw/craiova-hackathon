@@ -124,6 +124,22 @@ CREATE TABLE IF NOT EXISTS entity_reviews (
     created_at       TEXT NOT NULL
 );
 
+-- "Who's who" for a common name: the verification agent groups same-name
+-- entities into distinct people (app/identity.py); the analyst picks which
+-- one is the subject. Replaced as a set on each verification run.
+CREATE TABLE IF NOT EXISTS identity_clusters (
+    id               TEXT PRIMARY KEY,
+    investigation_id TEXT NOT NULL REFERENCES investigations(id),
+    label            TEXT NOT NULL,
+    summary          TEXT NOT NULL DEFAULT '',
+    distinguishing   TEXT NOT NULL DEFAULT '',            -- what tells this person apart
+    entity_ids       TEXT NOT NULL DEFAULT '[]',
+    is_subject       INTEGER NOT NULL DEFAULT 0,          -- the agent's view
+    chosen           INTEGER NOT NULL DEFAULT 0,          -- the analyst picked it as the subject
+    run_id           TEXT,
+    created_at       TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_runs (
     id               TEXT PRIMARY KEY,
     investigation_id TEXT NOT NULL REFERENCES investigations(id),
@@ -340,12 +356,13 @@ CREATE INDEX IF NOT EXISTS ix_entities_inv ON entities(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_edges_inv ON edges(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_audit_inv ON audit(investigation_id, ts);
 CREATE INDEX IF NOT EXISTS ix_materials_inv ON materials(investigation_id);
+CREATE INDEX IF NOT EXISTS ix_identity_inv ON identity_clusters(investigation_id);
 CREATE INDEX IF NOT EXISTS ix_reviews_entity ON entity_reviews(entity_id, created_at);
 CREATE INDEX IF NOT EXISTS ix_social_jobs_status ON social_jobs(status, created_at);
 """
 
 JSON_COLUMNS = {"settings", "input", "attributes", "stats", "body", "detail",
-                "transcript", "digest", "result"}
+                "transcript", "digest", "result", "profile", "entity_ids"}
 
 # Columns added after the first release: (table, column, DDL). Applied on open,
 # so an existing database file keeps working.
@@ -360,6 +377,9 @@ MIGRATIONS = [
     # admin's workspace (app/auth/store.py).
     ("investigations", "org_id", "TEXT"),
     ("audit", "org_id", "TEXT"),
+    # Subject profile of a Person target: what the brief says about who they
+    # are (app/identity.py), so namesakes can be told apart.
+    ("targets", "profile", "TEXT NOT NULL DEFAULT '{}'"),
 ]
 
 # Columns removed after a release: (table, column). Dropped on open, so an

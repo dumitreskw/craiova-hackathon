@@ -18,6 +18,7 @@ from .models import Database, now
 _PURGE_SQL = [
     "DELETE FROM notes WHERE entity_id IN (SELECT id FROM entities WHERE investigation_id = ?)",
     "DELETE FROM entity_reviews WHERE investigation_id = ?",
+    "DELETE FROM identity_clusters WHERE investigation_id = ?",
     ("DELETE FROM entity_sources WHERE entity_id IN "
      "(SELECT id FROM entities WHERE investigation_id = ?)"),
     "DELETE FROM edge_sources WHERE edge_id IN (SELECT id FROM edges WHERE investigation_id = ?)",

@@ -19,6 +19,33 @@ class InvestigationSettings(BaseModel):
     costly_connectors: Literal["none", "metered", "all"] = "all"
 
 
+_Terms = Field(default_factory=list, max_length=20)
+
+
+class SubjectProfile(BaseModel):
+    """What the brief says about who a person target is (app/identity.py).
+
+    Disambiguators (birth year, places, employers, schools, relatives) tell the
+    subject apart from namesakes; known identifiers (emails, usernames, phones,
+    profile URLs) are anchors: they are added as targets and tie what is found
+    through them to the subject.
+    """
+    aliases: list[str] = _Terms
+    birth_year: int | None = Field(None, ge=1900, le=2030)
+    birth_date: str | None = Field(None, max_length=10, description="YYYY-MM-DD if known")
+    nationalities: list[str] = _Terms
+    locations: list[str] = _Terms
+    employers: list[str] = _Terms
+    roles: list[str] = _Terms
+    education: list[str] = _Terms
+    relatives: list[str] = _Terms
+    emails: list[str] = _Terms
+    usernames: list[str] = _Terms
+    phones: list[str] = _Terms
+    profile_urls: list[str] = _Terms
+    notes: str = Field("", max_length=2000)
+
+
 class InvestigationCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     purpose: str = Field(min_length=10, max_length=2000,
@@ -42,6 +69,17 @@ class TargetCreate(BaseModel):
     type: str = "auto"
     scan: bool = True
     max_depth: int | None = Field(None, ge=0, le=3)
+    profile: SubjectProfile | None = None   # Person targets only
+
+
+class ProfileUpdate(BaseModel):
+    profile: SubjectProfile
+    scan: bool = Field(True, description="scan the new identifiers the profile adds")
+
+
+class IdentityChoice(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000,
+                        description="what ties this identity to the subject")
 
 
 class ScanRequest(BaseModel):
