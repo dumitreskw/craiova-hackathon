@@ -48,7 +48,7 @@ from .page import to_html
 STATUSES = {"verified", "unverified", "leaked", "inference"}
 AUDIENCES = {"internal", "client"}
 LEGAL_CONNECTORS = {"interpol", "europol", "sanctions", "national_wanted", "fbi_wanted",
-                    "court_records"}
+                    "court_records", "court_records_org"}
 _LEGAL_IN = ",".join("?" * len(LEGAL_CONNECTORS))
 
 SOURCE_NAMES = {
@@ -69,6 +69,10 @@ SOURCE_NAMES = {
     "holehe": "Account registration check", "maigret": "Username search",
     "wayback": "Internet Archive Wayback Machine", "virustotal_domain": "VirusTotal",
     "virustotal_ip": "VirusTotal", "hibp": "Have I Been Pwned",
+    "court_records": "Romanian court portal (portal.just.ro)",
+    "court_records_org": "Romanian court portal (portal.just.ro)",
+    "opencorporates": "OpenCorporates company officers", "news": "News (GDELT)",
+    "news_org": "News (GDELT)", "subject_profile": "Analyst's subject profile",
 }
 
 STATUS_LABEL = {

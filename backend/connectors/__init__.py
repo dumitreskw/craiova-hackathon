@@ -13,6 +13,9 @@ from typing import Awaitable, Callable
 
 from .base import ConnectorResult, EntityType
 from .archive_breach import hibp, wayback
+from .court_records import court_records, court_records_org
+from .news import news
+from .opencorporates import opencorporates_officers
 from .crtsh import crtsh_subdomains
 from .dehashed import dehashed
 from .dns_lookup import dns_lookup
@@ -154,6 +157,25 @@ REGISTRY: dict[str, ConnectorSpec] = {
                       "VirusTotal: verdicts, reputation, ASN/owner and domains seen on an IP.",
                       requires_key="VIRUSTOTAL_API_KEY", cost="metered", quota=240,
                       quota_days=1, timeout=120),
+        # People and companies in context: courts, officers, news.
+        ConnectorSpec("court_records", court_records, EntityType.PERSON, True,
+                      "Romanian court cases (portal.just.ro) where a person is a party: court "
+                      "and city, role, subject matter, stage (unverified name matches).",
+                      timeout=120),
+        ConnectorSpec("court_records_org", court_records_org, EntityType.ORGANIZATION, True,
+                      "Romanian court cases (portal.just.ro) where a company is a party, by "
+                      "its name (unverified name matches).", timeout=120, seed_only=True),
+        ConnectorSpec("opencorporates", opencorporates_officers, EntityType.PERSON, True,
+                      "OpenCorporates: company officers with this name (directors, "
+                      "secretaries) with their companies, roles and dates.",
+                      requires_key="OPENCORPORATES_API_TOKEN"),
+        ConnectorSpec("news", news, EntityType.PERSON, True,
+                      "News articles from the last year (GDELT, worldwide incl. Romanian "
+                      "media) matching a name or quoted phrases, e.g. '\"Jane Doe\" "
+                      "\"Craiova\"'."),
+        ConnectorSpec("news_org", news, EntityType.ORGANIZATION, True,
+                      "News articles from the last year (GDELT) about a company name.",
+                      seed_only=True),
         ConnectorSpec("hibp", hibp, EntityType.EMAIL, True,
                       "Have I Been Pwned: breaches an email appears in, with dates and data "
                       "classes. Never returns passwords.", requires_key="HIBP_API_KEY",

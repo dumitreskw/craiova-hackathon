@@ -83,6 +83,12 @@ SOURCE_RELIABILITY: dict[str, float] = {
     "analyst_material": 0.7,
     # The subject profile in the analyst's brief (app/identity.py).
     "subject_profile": 0.7,
+    # Courts: an official record, but matched on the party's name only.
+    "court_records": 0.9,
+    "court_records_org": 0.9,
+    "opencorporates": 0.85,
+    "news": 0.6,
+    "news_org": 0.6,
     # Persona/anonymous social capture through the Kali worker (app/social.py).
     "social_capture": 0.85,
     # Leads from in-platform search / co-engagement: candidates to confirm, not facts.

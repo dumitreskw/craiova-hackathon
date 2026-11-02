@@ -40,10 +40,10 @@ PIVOTS: dict[EntityType, list[str]] = {
                         "wayback", "virustotal_domain", "dnstwist", "hunter", "tomba",
                         "http_probe"],
     EntityType.IP: ["otx_ip", "virustotal_ip", "ipinfo", "shodan"],
-    EntityType.ORGANIZATION: ["anaf", "vies", "companies_house", "gleif", "opencorporates",
-                              "sanctions", "seap", "news", "dork_search"],
+    EntityType.ORGANIZATION: ["anaf", "vies", "companies_house", "gleif", "sanctions",
+                              "court_records_org", "news_org", "dork_search"],
     EntityType.PERSON: ["sanctions", "interpol", "europol", "national_wanted",
-                        "court_records", "news", "dork_search"],
+                        "court_records", "opencorporates", "news", "dork_search"],
     EntityType.EMAIL: ["gravatar", "holehe", "hibp", "email_rep", "dork_search"],
     EntityType.USERNAME: ["github_user", "maigret"],
     EntityType.PHONE: ["phone_lookup", "hibp"],
@@ -67,6 +67,10 @@ ARG: dict[str, Callable[[dict], str]] = {
     # Name-based registries get the legal name once a registry has supplied it.
     "gleif": _org_name,
     "sanctions": lambda e: _org_name(e) if e["type"] == "Organization" else e["key"],
+    "court_records_org": _org_name,
+    "news_org": lambda e: f'"{_org_name(e)}"',
+    "court_records": lambda e: e["label"],
+    "opencorporates": lambda e: e["label"],
 }
 
 # Registries that only make sense for a matching identifier format.
@@ -74,6 +78,11 @@ APPLIES: dict[str, Callable[[dict], bool]] = {
     "anaf": lambda e: e["key"].upper().startswith("RO") and e["key"][2:].isdigit(),
     "vies": lambda e: e["key"][:2].isalpha() and e["key"][2:3].isdigit(),
     "companies_house": lambda e: e["key"].upper().startswith("GB") and e["key"][2:].isalnum(),
+    # Name searches need a name, not a bare registry number.
+    "court_records_org": lambda e: bool(e["attributes"].get("legal_name"))
+    or not any(c.isdigit() for c in e["key"]),
+    "news_org": lambda e: bool(e["attributes"].get("legal_name"))
+    or not any(c.isdigit() for c in e["key"]),
 }
 
 MIN_PIVOT_CONFIDENCE = 0.5
@@ -100,7 +109,8 @@ def connectors_for(entity: dict, investigation: dict, depth: int = 0) -> list[st
 
 
 def arg_for(connector: str, entity: dict, profile: dict | None = None) -> str:
-    if connector == "dork_search" and entity["type"] == EntityType.PERSON.value and profile:
+    if connector in ("dork_search", "news") and entity["type"] == EntityType.PERSON.value \
+            and profile:
         return identity.search_query(entity["label"], profile)
     return ARG.get(connector, lambda e: e["key"])(entity)
 
@@ -142,6 +152,8 @@ class QuickScan:
         self.db = ledger.db
         self.settings = ledger.settings
         self.tasks: dict[str, asyncio.Task] = {}
+        # Called as fn(investigation, run_id, status, user) when a run ends.
+        self.on_finished: list[Callable[[dict, str, str, str], None]] = []
 
     def start(self, investigation: dict, entity_ids: list[str], user: str,
               max_depth: int | None = None, only: list[str] | None = None,
@@ -242,4 +254,9 @@ class QuickScan:
                                               "stats": dict(stats), "finished_at": now()})
         self.ledger.bus.publish(inv_id, "scan.finished",
                                 {"run_id": run_id, "status": status, "summary": summary})
+        for fn in self.on_finished:
+            try:
+                fn(investigation, run_id, status, user)
+            except Exception as e:  # noqa: BLE001 - a hook never fails the scan
+                self.ledger.bus.publish(inv_id, "scan.hook_failed", {"error": str(e)[:300]})
         return dict(stats)
