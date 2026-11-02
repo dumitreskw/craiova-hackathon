@@ -31,6 +31,7 @@ from bs4 import BeautifulSoup
 from .base import ConnectorResult, EntityType
 from ._http import USER_AGENT, get_client
 from ._legal import UNVERIFIED_NOTE, legal_hit
+from ._names import matches_query
 from ._tls import context_with_intermediates
 
 
@@ -150,7 +151,7 @@ async def _romania(name: str) -> list[Hit]:
 
     hits: list[Hit] = []
     for p in collected.values():
-        if needle in p["name"].lower():
+        if matches_query(needle, p["name"]):
             hits.append(Hit(
                 name=p["name"], country="Romania", source="politiaromana",
                 url=p["url"], list_name="Poliția Română — persoane urmărite",

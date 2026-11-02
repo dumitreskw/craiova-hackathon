@@ -186,7 +186,7 @@ async def test_linkedin_is_refused_anonymously(platform, make_investigation):
         assert out.refused and "logged-in research account" in out.error
     box = ToolBox(platform.ledger, inv, "ar_x", "t", budget=5)
     msg, err = await box.call("read_page", {"url": "https://ro.linkedin.com/in/jane-doe"})
-    assert err and "Linkedin pages show a login wall" in msg and box.calls == 0
+    assert err and "LinkedIn pages show a login wall" in msg and box.calls == 0
 
 
 # --- 2, 5 & 7. API: profile, identity, who's who, verdicts on the graph --------------------------
@@ -304,4 +304,4 @@ async def test_linkedin_captures_need_a_logged_in_persona(platform, make_investi
     out = await platform.social.capture(inv, url, user="t", run_by="t", persona="none")
     assert out.refused and "login wall" in out.error
     out = await platform.social.capture(inv, url, user="t", run_by="t")
-    assert out.refused and "No logged-in Linkedin research account" in out.error
+    assert out.refused and "No logged-in LinkedIn research account" in out.error

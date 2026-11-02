@@ -18,7 +18,7 @@ from typing import Any
 from .. import identity, review
 from ..models import Database
 from ..report import LEGAL_CONNECTORS
-from ..resolver import best_attributes
+from ..resolver import Resolver, best_attributes
 
 BUDGET_CHARS = 260_000        # about 65k tokens of dossier
 PAGE_CHARS = 6_000            # per read page / profile / material
@@ -86,6 +86,7 @@ def build(db: Database, data_dir: Any, investigation: dict, goal: str) -> str:
     for r in rows:
         by_type.setdefault(r["type"], []).append(r)
     relevant_findings: list[str] = []
+    resolver = Resolver(db)
     for etype, items in by_type.items():
         if kind != "domain" and etype in _PLUMBING:
             out.append(f"### {etype}: {len(items)} (plumbing; open with list_entities if needed)")
@@ -102,8 +103,9 @@ def build(db: Database, data_dir: Any, investigation: dict, goal: str) -> str:
             if v:
                 mark += f"; {'Claude' if v['by_agent'] else 'analyst'} verdict {v['verdict']}: " \
                         f"{v['reason'][:200]}"
+            independent = len(resolver.publishers(r["id"]))
             out.append(f"- {r['id']} {r['key']} [{mark}] attrs={_compact(attrs)} "
-                       f"findings={','.join(fids[:8])}")
+                       f"findings={','.join(fids[:8])} independent_sources={independent}")
         if len(items) > MAX_ENTITIES_PER_TYPE:
             out.append(f"- ... {len(items) - MAX_ENTITIES_PER_TYPE} more (list_entities)")
 

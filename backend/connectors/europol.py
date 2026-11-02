@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 from .base import ConnectorResult, EntityType
 from ._http import get_client, retry
 from ._legal import UNVERIFIED_NOTE, legal_hit, normalize_name
+from ._names import matches_query
 
 BASE = "https://eumostwanted.eu"
 
@@ -58,7 +59,7 @@ async def europol_wanted(name: str) -> ConnectorResult:
     fugitives = _parse_fugitives(resp.text)
 
     needle = normalize_name(name)
-    matches = [f for f in fugitives if needle in normalize_name(f["name"])]
+    matches = [f for f in fugitives if matches_query(needle, f["name"])]
 
     entities = []
     rels = []

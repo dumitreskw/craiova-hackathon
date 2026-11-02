@@ -19,9 +19,9 @@ pieces that keep them apart:
 from __future__ import annotations
 
 import re
-import unicodedata
 from typing import Any
 
+from connectors._names import fold, name_key, name_relation, name_tokens, same_name
 from connectors.base import EntityType
 
 from .models import Database, new_id, now
@@ -29,32 +29,11 @@ from .models import Database, new_id, now
 PROFILE_CHECK = "profile_check"   # reviewer name of the automatic rejection
 PROFILE_SOURCE = "subject_profile"  # finding that records the brief and ties identifiers
 COMMON_NAME_AT = 3                # namesakes + list matches that make a name "common"
+SORT_AT = 2                       # ... that are worth an automatic verification run
 
 _WORD = re.compile(r"[a-z0-9]+")
-_YEAR = re.compile(r"\b(19\d{2}|20[0-3]\d)\b")
-# Letters NFKD leaves alone.
-_FOLD = str.maketrans({"ß": "ss", "æ": "ae", "ø": "o", "œ": "oe", "đ": "d", "ł": "l",
-                       "ı": "i", "þ": "th"})
-
-
-def fold(text: str) -> str:
-    """Lowercase without diacritics: "Ștefan Țurcan" -> "stefan turcan"."""
-    text = unicodedata.normalize("NFKD", (text or "").lower().translate(_FOLD))
-    return "".join(c for c in text if not unicodedata.combining(c)).translate(_FOLD)
-
-
-def name_tokens(name: str) -> list[str]:
-    return _WORD.findall(fold(name))
-
-
-def name_key(name: str) -> str:
-    """Order-free, diacritic-free form of a name, for comparing people."""
-    return " ".join(sorted(name_tokens(name.split(" @ ")[0])))
-
-
-def same_name(a: str, b: str) -> bool:
-    ka = name_key(a)
-    return bool(ka) and ka == name_key(b)
+_YEAR = re.compile(r"(?<!\d)(19\d{2}|20[0-3]\d)(?!\d)")
+__all__ = ["fold", "name_key", "name_relation", "name_tokens", "same_name"]
 
 
 # --- the profile ------------------------------------------------------------------
@@ -368,6 +347,13 @@ def name_stats(db: Database, investigation_id: str, entity_id: str) -> dict[str,
     return {"namesakes": namesakes, "list_matches": list_matches}
 
 
+def needs_sorting(db: Database, investigation_id: str) -> bool:
+    """A person target has enough namesakes / list matches that a verification
+    run should sort them (whatever the profile says)."""
+    return any(sum(name_stats(db, investigation_id, t["entity_id"]).values()) >= SORT_AT
+               for t in person_targets(db, investigation_id))
+
+
 def overview(db: Database, investigation_id: str) -> dict[str, Any]:
     """Per Person target: its profile, name statistics and the common-name warning;
     and the who's-who clusters."""
@@ -418,6 +404,7 @@ def save_clusters(db: Database, investigation_id: str, items: list[dict], run_id
         keep = bool(chosen) and (set(ids) & set(chosen["entity_ids"] or [])
                                  or label == chosen["label"])
         db.insert("identity_clusters", {
+            "facts": clean_facts(item.get("facts")),
             "id": new_id("ic"), "investigation_id": investigation_id, "label": label,
             "summary": str(item.get("summary") or "")[:1000],
             "distinguishing": str(item.get("distinguishing") or "")[:500],
@@ -428,6 +415,90 @@ def save_clusters(db: Database, investigation_id: str, items: list[dict], run_id
         n += 1
     db.conn.commit()
     return n
+
+
+_FACT_FIELDS = ("nationalities", "locations", "employers", "roles", "education")
+
+
+def clean_facts(facts: Any) -> dict:
+    """The structured facts the verification agent gives for one person."""
+    if not isinstance(facts, dict):
+        return {}
+    out: dict[str, Any] = {}
+    year = facts.get("birth_year")
+    if isinstance(year, (int, str)) and str(year).isdigit() and 1900 <= int(year) <= 2030:
+        out["birth_year"] = int(year)
+    for f in _FACT_FIELDS:
+        vals = [" ".join(str(v).split())[:120] for v in facts.get(f) or []
+                if isinstance(v, (str, int)) and str(v).strip()]
+        if vals:
+            out[f] = vals[:8]
+    return out
+
+
+def harvested_facts(db: Database, entity_ids: list[str]) -> dict:
+    """Facts the subject's own entities show: the companies they are tied to, the
+    location and employer on their profiles, their nationality and job."""
+    out: dict[str, list[str]] = {f: [] for f in _FACT_FIELDS}
+
+    def add(field: str, value: Any) -> None:
+        if isinstance(value, str) and value.strip() and value.strip() not in out[field]:
+            out[field].append(value.strip()[:120])
+
+    for eid in entity_ids:
+        row = db.get("entities", eid)
+        if row is None or row["status"] == "rejected":
+            continue
+        attrs = {k: v[0]["value"] for k, v in (row["attributes"] or {}).items() if v}
+        if row["type"] == "Organization" and not attrs.get("unverified"):
+            add("employers", attrs.get("legal_name") or attrs.get("title") or row["key"].title())
+        elif row["type"] == "Person":
+            add("nationalities", attrs.get("nationality"))
+            add("roles", attrs.get("occupation") or attrs.get("position"))
+        elif row["type"] == "SocialProfile":
+            add("locations", attrs.get("location"))
+            add("employers", (attrs.get("company") or "").lstrip("@") or None)
+    return {f: v[:5] for f, v in out.items() if v}
+
+
+def merge_into_profile(profile: dict, facts: dict) -> tuple[dict, dict]:
+    """Add what the profile doesn't have yet; never overwrite. Returns
+    ``(profile, added)``."""
+    merged = {**profile}
+    added: dict[str, Any] = {}
+    if facts.get("birth_year") and not birth_year(profile):
+        merged["birth_year"] = added["birth_year"] = facts["birth_year"]
+    for f in _FACT_FIELDS:
+        have = {fold(v) for v in merged.get(f) or []}
+        new = [v for v in facts.get(f) or [] if fold(v) not in have]
+        if new:
+            merged[f] = [*(merged.get(f) or []), *new]
+            added[f] = new
+    return clean_profile(merged), added
+
+
+def learn_from_choice(db: Database, cluster: dict, user: str) -> dict:
+    """The analyst picked the subject: put what is now known about them into
+    the profile of every Person target, so the next search and every brief
+    use it. Returns the targets whose search context changed."""
+    facts = clean_facts(cluster.get("facts"))
+    harvested = harvested_facts(db, cluster.get("entity_ids") or [])
+    for f, vals in harvested.items():
+        facts[f] = [*facts.get(f, []), *[v for v in vals if v not in facts.get(f, [])]]
+    learned: dict[str, Any] = {}
+    refresh: list[str] = []
+    for t in person_targets(db, cluster["investigation_id"]):
+        before = t.get("profile") or {}
+        profile, added = merge_into_profile(before, facts)
+        if not added:
+            continue
+        db.update("targets", t["id"], {"profile": profile})
+        db.audit(user=user, action="target.profile", investigation_id=t["investigation_id"],
+                 target=t["value"], detail={"learned_from": cluster["id"], "added": added})
+        learned = added
+        if search_query(t["value"], profile) != search_query(t["value"], before):
+            refresh.append(t["entity_id"])
+    return {"learned": learned, "refresh": refresh}
 
 
 def choose(db: Database, resolver: Any, bus: Any, cluster_id: str, reason: str,
@@ -464,7 +535,9 @@ def choose(db: Database, resolver: Any, bus: Any, cluster_id: str, reason: str,
             review.record(db, resolver, bus, eid, verdict, why[:600], reviewer=user,
                           user=user, by_agent=False)
             done[verdict] += 1
+    learned = learn_from_choice(db, row, user)
     db.audit(user=user, action="identity.choose", investigation_id=inv_id,
-             target=row["label"], detail={"cluster_id": cluster_id, "reason": reason, **done})
+             target=row["label"], detail={"cluster_id": cluster_id, "reason": reason, **done,
+                                          "learned": learned["learned"]})
     bus.publish(inv_id, "identity.chosen", {"cluster_id": cluster_id, **done})
-    return {"cluster": db.get("identity_clusters", cluster_id), **done}
+    return {"cluster": db.get("identity_clusters", cluster_id), **done, **learned}

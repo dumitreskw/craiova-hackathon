@@ -22,14 +22,24 @@ Implements docs/03-data-model.md:
   keyed by what it came with, tied to the same-name person by a
   ``possible_match`` edge, so a namesake's job, nationality and emails never
   become the subject's and the scan never follows them.
+* **Name variants are leads, not merges.** A Person whose name is probably
+  the same written differently (a middle or maiden name, a nickname, a
+  Cyrillic or phonetic spelling; connectors/_names.py) stays its own node,
+  tied to the existing person by a ``possible_match`` edge with basis
+  "name variant", for the verify agent or the analyst to settle.
+* **Independent sources.** Confidence counts each publisher once: two
+  reads of the same site, or a search hit and the page it points to, are
+  one source, not two (:func:`publisher`).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
-from connectors.base import ConnectorResult, EntityCandidate, EntityType
+from connectors._names import name_relation
+from connectors.base import SOURCE_RELIABILITY, ConnectorResult, EntityCandidate, EntityType
 
 from ..identity import identifiers, name_key, profile_for_entity
 from ..models import Database, new_id, now
@@ -51,6 +61,52 @@ def combine(scores: list[tuple[float, float]]) -> float:
     for reliability, quality in scores:
         p *= 1.0 - max(0.0, min(1.0, reliability * quality))
     return round(1.0 - p, 4)
+
+
+# Connectors that read one page: the page's site is the publisher.
+PAGE_CONNECTORS = {"web_read", "screenshot", "social_capture", "http_probe"}
+# The analyst's own input, however it arrived, is one source.
+ANALYST_CONNECTORS = {"analyst_material", "subject_profile"}
+# Second-level suffixes under which the registrable domain has three labels.
+_SECOND_LEVEL = {"co.uk", "org.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk", "com.au",
+                 "net.au", "org.au", "co.jp", "co.nz", "co.za", "com.br", "com.tr",
+                 "co.in", "com.cn", "com.mx", "com.ar", "co.il", "com.ro", "org.ro",
+                 "info.ro", "nom.ro", "firm.ro", "store.ro", "www.ro", "com.ua", "com.pl"}
+
+
+def site_of(value: str | None) -> str | None:
+    """Registrable domain of a URL or host: "https://www.bbc.co.uk/x" -> "bbc.co.uk"."""
+    if not value:
+        return None
+    host = urlparse(value).hostname if "://" in value else value.split("/")[0]
+    host = (host or "").lower().strip(".")
+    if "." not in host or host.replace(".", "").isdigit():
+        return host or None
+    parts = host.split(".")
+    n = 3 if ".".join(parts[-2:]) in _SECOND_LEVEL and len(parts) >= 3 else 2
+    return ".".join(parts[-n:])
+
+
+def publisher(connector: str | None, arg: str | None, etype: str, key: str) -> str:
+    """Who stands behind a finding, for counting independent sources.
+
+    A page read is its site; a search hit about a URL is that URL's site (the
+    snippet is the page); the analyst is one source; anything else is the
+    connector (a registry, DNS, a breach index), with its per-type variants
+    (otx_domain / otx_ip) counted as one.
+    """
+    if connector is None:
+        return f"?{arg}"
+    if connector in ANALYST_CONNECTORS:
+        return "analyst"
+    if connector in PAGE_CONNECTORS:
+        return f"site:{site_of(arg) or arg}"
+    if connector == "dork_search" and etype == EntityType.URL.value:
+        return f"site:{site_of(key) or key}"
+    for suffix in ("_domain", "_ip", "_org"):
+        if connector.endswith(suffix):
+            return connector[: -len(suffix)]
+    return connector
 
 
 def best_attributes(attrs: dict[str, list[dict]]) -> dict[str, Any]:
@@ -245,6 +301,24 @@ class Resolver:
         c.commit()
         return removed
 
+    def add_attribute(self, entity_id: str, name: str, value: Any, finding_id: str) -> None:
+        """Record a derived attribute (e.g. an avatar fingerprint) under the finding
+        it was derived from."""
+        row = self.db.get("entities", entity_id)
+        attrs = row["attributes"]
+        _add_attr(attrs, name, value, finding_id)
+        self.db.update("entities", entity_id, {"attributes": attrs})
+
+    def link(self, investigation_id: str, finding_id: str, etype: str, src: str, dst: str,
+             attributes: dict, quality: float = 1.0) -> dict | None:
+        """Add an edge derived from a finding; returns the edge view when it is new."""
+        f = self.db.get("findings", finding_id)
+        reliability = SOURCE_RELIABILITY.get(f["connector"], 0.6) if f else 0.6
+        out = FoldResult()
+        self._upsert_edge(out, investigation_id, finding_id, reliability, quality, etype,
+                          src, dst, attributes)
+        return out.new_edges[0] if out.new_edges else None
+
     def ensure_entity(self, investigation_id: str, etype: EntityType, key: str) -> str:
         """Create (or find) a seed entity that has no finding behind it yet."""
         row = self._find(investigation_id, etype.value, key)
@@ -358,15 +432,28 @@ class Resolver:
             out.new_edges.append(edge_view(self.db.get("edges", edge_id)))
         return edge_id
 
+    def publishers(self, entity_id: str) -> dict[str, float]:
+        """Independent sources of an entity: publisher -> its best score."""
+        row = self.db.get("entities", entity_id)
+        out: dict[str, float] = {}
+        for s in self.db.query(
+                "SELECT es.finding_id, es.reliability, es.match_quality, f.connector, f.input "
+                "FROM entity_sources es LEFT JOIN findings f ON f.id = es.finding_id "
+                "WHERE es.entity_id = ?", (entity_id,)):
+            arg = (s["input"] or {}).get("arg") if s["connector"] else s["finding_id"]
+            who = publisher(s["connector"], arg, row["type"], row["key"])
+            score = max(0.0, min(1.0, s["reliability"] * s["match_quality"]))
+            out[who] = max(out.get(who, 0.0), score)
+        return out
+
     def _recompute_entity(self, entity_id: str) -> None:
         row = self.db.get("entities", entity_id)
         if row["status"] == "confirmed":
             conf = 1.0
         else:
-            scores = self.db.conn.execute(
-                "SELECT reliability, match_quality FROM entity_sources WHERE entity_id = ?",
-                (entity_id,)).fetchall()
-            conf = combine([tuple(s) for s in scores]) if scores else row["confidence"]
+            by_publisher = self.publishers(entity_id)
+            conf = (combine([(score, 1.0) for score in by_publisher.values()])
+                    if by_publisher else row["confidence"])
         self.db.update("entities", entity_id, {"confidence": conf})
 
     # --- people ------------------------------------------------------------------------
@@ -381,7 +468,9 @@ class Resolver:
             "AND type = 'Person' AND status != 'candidate'", (investigation_id,))
             if name_key(r["key"]) == nkey] if nkey else []
         if not same:
-            return self._upsert_entity(out, investigation_id, finding_id, reliability, cand)
+            eid = self._upsert_entity(out, investigation_id, finding_id, reliability, cand)
+            self._link_variants(out, investigation_id, finding_id, reliability, cand.key, eid)
+            return eid
         context = self._context(result, cand.key)
         # The subject (no namesake flag) first.
         for row in sorted(same, key=lambda r: "namesake" in (r["attributes"] or {})):
@@ -394,20 +483,36 @@ class Resolver:
         if ctx is None and trigger_entity_id:
             trig = self.db.get("entities", trigger_entity_id)
             ctx = trig["key"] if trig else None
-        key = f"{cand.key} @ {ctx or result.source}"
+        base = cand.key.split(" @ ")[0]
+        key = cand.key if " @ " in cand.key else f"{base} @ {ctx or result.source}"
         attrs = {**cand.attributes, "namesake": True,
-                 "title": cand.attributes.get("title") or cand.key.title()}
+                 "title": cand.attributes.get("title") or base.title()}
         eid = self._upsert_entity(out, investigation_id, finding_id, reliability,
                                   EntityCandidate(cand.type, cand.key, attrs,
                                                   cand.match_quality), key=key)
         for row in same:
-            if row["id"] == eid or "namesake" in (row["attributes"] or {}):
+            # Only the plain-named person (the subject) gets the link, not other namesakes.
+            if row["id"] == eid or " @ " in row["key"] or "namesake" in (row["attributes"] or {}):
                 continue
             self._upsert_edge(out, investigation_id, finding_id, reliability, NAMESAKE_QUALITY,
                               CANDIDATE_EDGE, row["id"], eid,
                               {"unverified": True, "basis": "same name only",
                                "namesake": True})
         return eid
+
+    def _link_variants(self, out: FoldResult, investigation_id: str, finding_id: str,
+                       reliability: float, key: str, eid: str) -> None:
+        """possible_match from same-name-variant people (never a merge)."""
+        for row in self.db.query(
+                "SELECT id, key, attributes FROM entities WHERE investigation_id = ? "
+                "AND type = 'Person' AND status != 'candidate' AND id != ?",
+                (investigation_id, eid)):
+            if "namesake" in (row["attributes"] or {}):
+                continue
+            if name_relation(row["key"], key) == "variant":
+                self._upsert_edge(out, investigation_id, finding_id, reliability,
+                                  NAMESAKE_QUALITY, CANDIDATE_EDGE, row["id"], eid,
+                                  {"unverified": True, "basis": "name variant"})
 
     @staticmethod
     def _context(result: ConnectorResult, person_key: str) -> list[tuple[str, str]]:
@@ -470,15 +575,18 @@ class Resolver:
     def _link_possible_matches(self, out: FoldResult, investigation_id: str, finding_id: str,
                                reliability: float, cand: EntityCandidate,
                                candidate_id: str) -> None:
-        nkey = name_key(cand.key)
         for row in self.db.query(
                 "SELECT id, key, attributes FROM entities WHERE investigation_id=? AND type=? "
                 "AND status != 'candidate'", (investigation_id, cand.type.value)):
-            if name_key(row["key"]) != nkey or "namesake" in (row["attributes"] or {}):
+            if "namesake" in (row["attributes"] or {}):
+                continue
+            relation = name_relation(row["key"], cand.key)
+            if relation is None:
                 continue
             self._upsert_edge(out, investigation_id, finding_id, reliability, cand.match_quality,
                               CANDIDATE_EDGE, row["id"], candidate_id,
-                              {"unverified": True, "basis": "name match only"})
+                              {"unverified": True, "basis": "name match only"
+                               if relation == "same" else "name variant"})
 
     @staticmethod
     def _listing_for(result: ConnectorResult, cand: EntityCandidate) -> str:

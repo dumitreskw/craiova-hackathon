@@ -81,18 +81,36 @@ def test_combine_is_noisy_or():
     assert combine([(0.95, 0.3)]) == 0.285
 
 
-async def test_merge_dedupes_and_raises_confidence(platform, make_investigation):
+async def test_merge_dedupes_and_counts_independent_sources(platform, make_investigation):
     inv = make_investigation()
     seed = platform.resolver.ensure_entity(inv["id"], EntityType.DOMAIN, "example.com")
     await platform.ledger.run(inv, "dns", "example.com", user="t", run_by="test", entity_id=seed)
-    ip = platform.db.one("SELECT * FROM entities WHERE type = 'IPAddress'")
-    first = ip["confidence"]
+    sub = platform.db.one("SELECT * FROM entities WHERE key = 'example.com'")
+    first = sub["confidence"]
+    # The same source again is not a second source.
     await platform.ledger.run(inv, "dns", "example.com", user="t", run_by="test", entity_id=seed)
     ips = platform.db.query("SELECT * FROM entities WHERE type = 'IPAddress'")
     assert len(ips) == 1
-    assert ips[0]["confidence"] > first
     sources = platform.db.query("SELECT * FROM entity_sources WHERE entity_id = ?", (ips[0]["id"],))
     assert len(sources) == 2
+    assert platform.db.get("entities", sub["id"])["confidence"] == first
+    # An independent one is.
+    await platform.ledger.run(inv, "crtsh", "example.com", user="t", run_by="test", entity_id=seed)
+    assert platform.db.get("entities", sub["id"])["confidence"] > first
+
+
+def test_publishers_collapse_one_site():
+    from app.resolver import publisher, site_of
+    assert site_of("https://www.bbc.co.uk/news/x") == "bbc.co.uk"
+    assert site_of("blog.example.com") == "example.com"
+    url = "https://news.example.ro/articol"
+    # A search hit about a page and a read of that page: one publisher.
+    assert publisher("dork_search", '"Ion Popescu"', "URL", url) == \
+        publisher("web_read", url, "URL", url) == "site:example.ro"
+    assert publisher("otx_domain", "x.com", "Domain", "x.com") == publisher("otx_ip", "1.2.3.4",
+                                                                            "IPAddress", "1.2.3.4")
+    assert publisher("analyst_material", "f", "Person", "x") == \
+        publisher("subject_profile", "y", "Person", "x")
 
 
 async def test_legal_hits_stay_unverified_candidates(platform, make_investigation):
